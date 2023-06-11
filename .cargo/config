@@ -1,0 +1,2 @@
+[build]
+target-dir = "/home/ensc/.cache/rust/r-ser2net"
