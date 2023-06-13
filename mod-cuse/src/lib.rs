@@ -5,7 +5,7 @@ pub mod ffi;
 mod error;
 mod io;
 
-use std::{os::fd::{AsRawFd, RawFd}, io::IoSlice};
+use std::{os::fd::{AsFd, BorrowedFd}, io::IoSlice};
 
 pub use error::Error;
 pub use io::ReadBuf;
@@ -50,7 +50,10 @@ pub struct OpInInfo {
 }
 
 impl OpInInfo {
-    fn send(&self, fd: RawFd, data: &[IoSlice], total_len: usize) -> Result<(), Error> {
+    fn send(&self, fd: BorrowedFd, data: &[IoSlice], total_len: usize) -> Result<(), Error> {
+	use std::os::fd::AsRawFd;
+
+	let fd = fd.as_raw_fd();
 	let sent_len = nix::sys::uio::writev(fd, data)?;
 
 	if sent_len != total_len {
@@ -61,7 +64,7 @@ impl OpInInfo {
     }
 
 
-    pub fn send_error<W: AsRawFd>(&self, w: W, rc: nix::libc::c_int) -> Result<(), Error>
+    pub fn send_error<W: AsFd>(&self, w: W, rc: nix::libc::c_int) -> Result<(), Error>
     {
 	let hdr = ffi::fuse_out_header {
 	    len:	core::mem::size_of::<ffi::fuse_out_header>() as u32,
@@ -73,10 +76,10 @@ impl OpInInfo {
 	    IoSlice::new(hdr.as_bytes())
 	];
 
-	self.send(w.as_raw_fd(), &iov, hdr.len as usize)
+	self.send(w.as_fd(), &iov, hdr.len as usize)
     }
 
-    pub fn send_response<W: AsRawFd>(&self, w: W, data: &[&[u8]]) -> Result<(), Error>
+    pub fn send_response<W: AsFd>(&self, w: W, data: &[&[u8]]) -> Result<(), Error>
     {
 	let len = data.iter().fold(core::mem::size_of::<ffi::fuse_out_header>(),
 				   |acc, a| acc + a.len());
@@ -95,7 +98,7 @@ impl OpInInfo {
 	    iov.push(IoSlice::new(d));
 	}
 
-	self.send(w.as_raw_fd(), &iov, len)
+	self.send(w.as_fd(), &iov, len)
     }
 }
 

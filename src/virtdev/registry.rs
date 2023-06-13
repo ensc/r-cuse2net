@@ -40,7 +40,39 @@ impl std::ops::Deref for DeviceRegistry {
     }
 }
 
+struct ManagedHdl<'a> {
+    registry:	&'a DeviceRegistry,
+    hdl:	Option<u64>,
+}
+
+impl ManagedHdl<'_> {
+    pub fn commit(mut self, state: DeviceState) {
+	let hdl = self.hdl.take().unwrap();
+
+	self.registry.write().unwrap()
+	    .devices
+	    .insert(hdl, state);
+    }
+}
+
+impl std::ops::Drop for ManagedHdl<'_> {
+    fn drop(&mut self) {
+        if let Some(hdl) = self.hdl {
+	    self.registry.write().unwrap()
+		.devices
+		.remove(&hdl);
+	}
+    }
+}
+
 impl DeviceRegistry {
+    fn new_managed_hdl(&self, hdl: u64) -> ManagedHdl {
+	ManagedHdl {
+	    registry:	self,
+	    hdl:	Some(hdl),
+	}
+    }
+
     pub fn new(cuse: Arc<File>) -> Self {
 	Self(Arc::new(RwLock::new(DeviceRegistryInner {
 	    dev_hdl:	AtomicU64::new(1),
@@ -63,6 +95,7 @@ impl DeviceRegistry {
 
 	let hdl = std::thread::spawn(move || -> Result<(), Error> {
 	    let cuse = &registry.read().unwrap().cuse;
+	    let mngd_hdl = registry.new_managed_hdl(dev_hdl);
 
 	    let args = super::device::OpenArgs {
 		addr:		addr,
@@ -73,8 +106,6 @@ impl DeviceRegistry {
 
 	    match Device::open(args) {
 		Ok(dev)		=> {
-		    let mut reg = registry.write().unwrap();
-
 		    let hdr = ensc_cuse_ffi::ffi::fuse_open_out {
 			fh:		dev_hdl,
 			open_flags:	open_flags,
@@ -85,13 +116,15 @@ impl DeviceRegistry {
 			hdr.as_bytes()
 		    ])?;
 
-		    reg.devices.insert(dev_hdl, dev.into());
+		    mngd_hdl.commit(dev.into());
 
 		    Ok(())
 		},
 
 		Err(e)		=> {
 		    error!("failed to open device: {e:?}");
+
+		    drop(mngd_hdl);
 
 		    let _ = op_info.send_error(cuse.as_fd(), -nix::libc::EIO);
 

@@ -16,7 +16,7 @@ enum LogFormat {
 #[derive(clap::Parser, Debug)]
 #[clap(author, version, about)]
 struct CliOpts {
-    #[clap(short('L'), long, value_parser, value_name("FMT"), help("log format"),
+    #[clap(long, value_parser, value_name("FMT"), help("log format"),
 	   default_value("default"))]
     log_format:		LogFormat,
 
