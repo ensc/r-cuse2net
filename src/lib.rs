@@ -5,7 +5,7 @@ extern crate tracing;
 
 mod error;
 mod virtdev;
-mod proto;
+pub mod proto;
 
 pub use error::Error;
 pub type Result<T> = std::result::Result<T, Error>;

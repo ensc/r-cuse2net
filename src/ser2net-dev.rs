@@ -1,8 +1,10 @@
 //
+#[macro_use]
+extern crate tracing;
 
 use r_ser2net::{ Result, Error };
 
-use std::path::PathBuf;
+use std::{path::{PathBuf, Path}, net::{TcpStream, TcpListener, IpAddr, SocketAddr}, sync::{RwLock, Arc}};
 
 #[derive(clap::ValueEnum)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +35,16 @@ struct CliOpts {
     device:		PathBuf,
 }
 
+fn run_thread(sock: TcpStream, device: PathBuf) -> Result<()> {
+    use r_ser2net::proto;
+
+    loop {
+	let op = proto::Request::recv(&sock)?;
+
+	debug!("running {op:?}");
+
+    }
+}
 fn main() -> Result<()> {
     use clap::Parser;
 
@@ -52,6 +64,21 @@ fn main() -> Result<()> {
 	LogFormat::Default		=> unreachable!(),
     }
 
-    todo!()
+    let socket = TcpListener::bind(SocketAddr::new(args.listen, args.port))?;
 
+    loop {
+	let (conn, addr) = socket.accept()?;
+	let device = args.device.clone();
+
+	info!("connection from {addr:?}");
+
+	std::thread::Builder::new()
+	    .name(format!("{addr:?}"))
+	    .spawn(move || {
+		match run_thread(conn, device) {
+		    Ok(_)	=> debug!("connection from {addr:?} finished successfully"),
+		    Err(e)	=> warn!("connection from {addr:?} failed with {e:?}"),
+		}
+	    })?;
+    }
 }

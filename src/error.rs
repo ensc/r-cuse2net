@@ -5,4 +5,7 @@ pub enum Error {
 
     #[error(transparent)]
     Cuse(#[from] ensc_cuse_ffi::Error),
+
+    #[error(transparent)]
+    Protocol(#[from] crate::proto::Error),
 }

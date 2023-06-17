@@ -93,45 +93,47 @@ impl DeviceRegistry {
 
 	assert!(!reg.devices.contains_key(&dev_hdl));
 
-	let hdl = std::thread::spawn(move || -> Result<(), Error> {
-	    let cuse = &registry.read().unwrap().cuse;
-	    let mngd_hdl = registry.new_managed_hdl(dev_hdl);
+	let hdl = std::thread::Builder::new()
+	    .name("open".to_string())
+	    .spawn(move || -> Result<(), Error> {
+		let cuse = &registry.read().unwrap().cuse;
+		let mngd_hdl = registry.new_managed_hdl(dev_hdl);
 
-	    let args = super::device::OpenArgs {
-		addr:		addr,
-		cuse:		cuse.clone(),
-		fuse_hdl:	dev_hdl,
-		flags:		flags,
-	    };
+		let args = super::device::OpenArgs {
+		    addr:		addr,
+		    cuse:		cuse.clone(),
+		    fuse_hdl:	dev_hdl,
+		    flags:		flags,
+		};
 
-	    match Device::open(args) {
-		Ok(dev)		=> {
-		    let hdr = ensc_cuse_ffi::ffi::fuse_open_out {
-			fh:		dev_hdl,
-			open_flags:	open_flags,
-			_padding:	Default::default(),
-		    };
+		match Device::open(args) {
+		    Ok(dev)		=> {
+			let hdr = ensc_cuse_ffi::ffi::fuse_open_out {
+			    fh:		dev_hdl,
+			    open_flags:	open_flags,
+			    _padding:	Default::default(),
+			};
 
-		    op_info.send_response(cuse.as_fd(), &[
-			hdr.as_bytes()
-		    ])?;
+			op_info.send_response(cuse.as_fd(), &[
+			    hdr.as_bytes()
+			])?;
 
-		    mngd_hdl.commit(dev.into());
+			mngd_hdl.commit(dev.into());
 
-		    Ok(())
-		},
+			Ok(())
+		    },
 
-		Err(e)		=> {
-		    error!("failed to open device: {e:?}");
+		    Err(e)		=> {
+			error!("failed to open device: {e:?}");
 
-		    drop(mngd_hdl);
+			drop(mngd_hdl);
 
-		    let _ = op_info.send_error(cuse.as_fd(), -nix::libc::EIO);
+			let _ = op_info.send_error(cuse.as_fd(), -nix::libc::EIO);
 
-		    Err(e)
+			Err(e)
+		    }
 		}
-	    }
-	});
+	    })?;
 
 	reg.devices.insert(dev_hdl, DeviceOpen {
 	    hdl:	hdl,

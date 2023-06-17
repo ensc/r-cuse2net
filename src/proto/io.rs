@@ -1,6 +1,8 @@
-use std::{os::fd::{AsFd, AsRawFd, RawFd}, mem::MaybeUninit, time::Duration};
+use std::{os::fd::{AsFd, AsRawFd, RawFd}, mem::MaybeUninit, time::Duration, io::IoSlice};
 
 use nix::sys::socket::MsgFlags;
+
+use super::{AsReprBytesMut, TIMEOUT_READ};
 
 fn wait_read(fd: RawFd, d: Duration) -> std::io::Result<Duration>
 {
@@ -46,6 +48,7 @@ fn recv_exact_timeout_internal(fd: RawFd, buf: &mut [MaybeUninit<u8>],
 			       to_cont: Option<Duration>) -> std::io::Result<&[u8]>
 {
     use nix::sys::socket;
+    use nix::Error as NixError;
 
     let buf: &mut [u8] = unsafe {
 	core::mem::transmute(buf)
@@ -60,13 +63,29 @@ fn recv_exact_timeout_internal(fd: RawFd, buf: &mut [MaybeUninit<u8>],
     }
 
     if len > 0 {
-	if let Some(d) = to_initial {
-	    let l = recv_timeout(fd, &mut buf[pos..], d)?;
+	match to_initial {
+	    Some(d)	=> {
+		let l = recv_timeout(fd, &mut buf[pos..], d)?;
 
-	    assert!(l <= len);
+		assert!(l <= len);
 
-	    pos += l;
-	    len -= l;
+		pos += l;
+		len -= l;
+	    },
+
+	    None	=> {
+		let l = socket::recv(fd, &mut buf[pos..], MsgFlags::empty())?;
+
+		if l == 0 {
+		    // eof
+		    return Err(NixError::EPIPE.into());
+		}
+
+		assert!(l <= len);
+
+		pos += l;
+		len -= l;
+	    },
 	}
     }
 
@@ -109,4 +128,24 @@ where
     (buf as &mut dyn super::AsReprBytesMut).update_repr(res);
 
     Ok(unsafe { buf.assume_init_ref() })
+}
+
+pub fn recv_to<R, B>(fd: R, mut buf: MaybeUninit<B>) -> std::io::Result<B>
+where
+    R: AsFd,
+    B: AsReprBytesMut + Sized,
+{
+    recv_exact_timeout(fd, &mut buf, Some(TIMEOUT_READ), Some(TIMEOUT_READ))?;
+
+    Ok(unsafe { buf.assume_init() })
+}
+
+pub fn send_all<W: AsFd + std::io::Write>(w: W, b: &[IoSlice]) -> std::io::Result<()> {
+    use nix::sys::uio;
+
+    let fd = w.as_fd().as_raw_fd();
+
+    uio::writev(fd, b)?;
+
+    Ok(())
 }

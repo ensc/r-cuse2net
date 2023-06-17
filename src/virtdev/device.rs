@@ -3,7 +3,7 @@ use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 
-use crate::Error;
+use crate::{Error, proto};
 
 use super::CONNECT_TIMEOUT;
 
@@ -37,6 +37,8 @@ impl Device {
     pub(super) fn open(args: OpenArgs) -> Result<Self, Error> {
 	let conn = TcpStream::connect_timeout(&args.addr, CONNECT_TIMEOUT)?;
 
+	let seq = proto::Request::send_open(&conn, args.flags)?;
+
 	let inner = Arc::new(DeviceInner {
 	    cuse:	args.cuse,
 	    fuse_hdl:	args.fuse_hdl,
@@ -49,21 +51,25 @@ impl Device {
 
 	let inner = Arc::new(RwLock::new(inner));
 
-	// hold the write until to end; this makes sure that 'Arc::get_mut()'
-	// below sees only one instance.  Threads will do a read lock and
-	// start after completing the initialization.
+	// hold the write lock until to end; this makes sure that 'Arc::get_mut()'
+	// below sees only one instance.  Threads will do a read lock and start
+	// after completing the initialization.
 	let mut dev = inner.write().unwrap();
 
 	let inner_rx = inner.clone();
 	let inner_tx = inner.clone();
 
-	let rx_hdl = std::thread::spawn(move || {
-	    DeviceInner::rx_thread(inner_rx.read().unwrap().clone())
-	});
+	let rx_hdl = std::thread::Builder::new()
+	    .name("rx".to_string())
+	    .spawn(move || {
+		DeviceInner::rx_thread(inner_rx.read().unwrap().clone())
+	    })?;
 
-	let tx_hdl = std::thread::spawn(move || {
-	    DeviceInner::tx_thread(inner_tx.read().unwrap().clone())
-	});
+	let tx_hdl = std::thread::Builder::new()
+	    .name("tx".to_string())
+	    .spawn(move || {
+		DeviceInner::tx_thread(inner_tx.read().unwrap().clone())
+	    })?;
 
 	{
 	    let dev = Arc::get_mut(&mut dev).unwrap();

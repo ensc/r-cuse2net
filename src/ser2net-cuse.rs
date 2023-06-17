@@ -82,7 +82,7 @@ fn main() -> Result<()> {
 
 	let (info, op) = ensc_cuse_ffi::OpIn::read(&mut iter).unwrap();
 
-	println!("info={info:?}, op={op:?}");
+	debug!("info={info:?}, op={op:?}");
 
 	match op {
 	    OpIn::CuseInit { flags, .. } if is_init	=> {
