@@ -116,20 +116,23 @@ impl From<&ffi::fuse_in_header> for OpInInfo {
 }
 
 #[derive(Debug, Clone)]
-pub enum OpIn {
+pub enum OpIn<'a> {
     Unknown,
     CuseInit{ version: KernelVersion, flags: ffi::flags },
     FuseOpen{ flags: u32, open_flags: ffi::open_flags },
+    FuseRelease { fh: u64, flags: u32, release_flags: u32, lock_owner: u64 },
+    FuseWrite{ fh: u64, offset: u64, write_flags: u32, lock_owner: u64, flags: u32, data: &'a[u8] },
+    FuseInterrupt { unique: u64 },
 }
 
-impl OpIn {
-    pub fn read(iter: &mut crate::io::ReadBufIter) -> Result<(OpInInfo, Self), crate::Error> {
+impl <'a> OpIn<'a> {
+    pub fn read(iter: &'a mut crate::io::ReadBufIter) -> Result<(OpInInfo, Self), crate::Error> {
 	let hdr: &ffi::fuse_in_header = iter.next()?.ok_or(Error::Eof)?;
 
 	iter.truncate(hdr.len as usize)?;
 
 	let res = match hdr.opcode {
-	    ffi::fuse_opcode::CUSE_INIT	=> {
+	    ffi::fuse_opcode::CUSE_INIT		=> {
 		let opdata: &ffi::cuse_init_in = iter.next()?.ok_or(Error::Eof)?;
 
 		Self::CuseInit {
@@ -141,7 +144,7 @@ impl OpIn {
 		}
 	    }
 
-	    ffi::fuse_opcode::FUSE_OPEN	=> {
+	    ffi::fuse_opcode::FUSE_OPEN		=> {
 		let opdata: &ffi::fuse_open_in = iter.next()?.ok_or(Error::Eof)?;
 
 		Self::FuseOpen {
@@ -150,11 +153,44 @@ impl OpIn {
 		}
 	    },
 
+	    ffi::fuse_opcode::FUSE_RELEASE	=> {
+		let opdata: &ffi::fuse_release_in = iter.next()?.ok_or(Error::Eof)?;
+
+		Self::FuseRelease {
+		    fh:			opdata.fh,
+		    flags:		opdata.flags,
+		    release_flags:	opdata.release_flags,
+		    lock_owner:		opdata.lock_owner,
+		}
+	    }
+
+	    ffi::fuse_opcode::FUSE_WRITE	=> {
+		let opdata: &ffi::fuse_write_in = iter.next()?.ok_or(Error::Eof)?;
+		let wdata: &[u8] = iter.next_slice(opdata.size as usize)?.ok_or(Error::Eof)?;
+
+		Self::FuseWrite {
+		    fh:			opdata.fh,
+		    offset:		opdata.offset,
+		    write_flags:	opdata.write_flags,
+		    lock_owner:		opdata.lock_owner,
+		    flags:		opdata.flags,
+		    data:		wdata,
+		}
+	    }
+
+	    ffi::fuse_opcode::FUSE_INTERRUPT => {
+		let opdata: &ffi::fuse_interrupt_in = iter.next()?.ok_or(Error::Eof)?;
+
+		Self::FuseInterrupt {
+		    unique:	opdata.unique,
+		}
+	    }
+
 	    _		=> Self::Unknown,
 	};
 
 	if !iter.is_empty() {
-	    warn!("excess elements in op-in data");
+	    warn!("excess elements in op-in data for {res:?}");
 	}
 
 	Ok((hdr.into(), res))

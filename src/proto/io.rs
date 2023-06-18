@@ -1,6 +1,6 @@
 use std::{os::fd::{AsFd, AsRawFd, RawFd}, mem::MaybeUninit, time::Duration, io::IoSlice};
 
-use nix::sys::socket::MsgFlags;
+use nix::sys::socket::{MsgFlags, SockaddrStorage};
 
 use super::{AsReprBytesMut, TIMEOUT_READ};
 
@@ -140,12 +140,55 @@ where
     Ok(unsafe { buf.assume_init() })
 }
 
-pub fn send_all<W: AsFd + std::io::Write>(w: W, b: &[IoSlice]) -> std::io::Result<()> {
-    use nix::sys::uio;
+pub fn send_vectored<W: AsFd + std::io::Write>(w: W, b: &[IoSlice]) -> std::io::Result<usize>
+{
+    use nix::sys::socket;
 
     let fd = w.as_fd().as_raw_fd();
 
-    uio::writev(fd, b)?;
+    let len = socket::sendmsg(fd, b, &[], MsgFlags::MSG_NOSIGNAL,
+			      Option::<SockaddrStorage>::None.as_ref())?;
+
+    Ok(len)
+}
+
+pub fn send_vectored_all<W: AsFd + std::io::Write>(mut w: W, b: &[IoSlice]) -> std::io::Result<()>
+{
+    let mut len = b.iter().fold(0, |acc, b| acc + b.len());
+
+    while len > 0 {
+	match send_vectored(&mut w, b) {
+	    Ok(l) if l == len		=> {
+		len -= l;
+	    },
+
+	    Ok(_)			=>
+		unimplemented!("incomplete vectored send not implemented"),
+	    Err(e)			=> return Err(e),
+	}
+    }
+
+    Ok(())
+}
+
+pub fn send_all<W: AsFd + std::io::Write>(w: W, b: &[u8]) -> std::io::Result<()>
+{
+    use nix::sys::socket;
+
+    let fd = w.as_fd().as_raw_fd();
+
+    let mut len = b.len();
+    let mut pos = 0;
+
+    while len > 0 {
+	let l = socket::send(fd, &b[pos..], MsgFlags::MSG_NOSIGNAL)?;
+
+	assert_ne!(l, 0);
+	assert!(l <= len);
+
+	len -= l;
+	pos += l;
+    }
 
     Ok(())
 }

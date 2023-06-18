@@ -54,7 +54,7 @@ pub struct ReadBufIter<'a>
 
 impl <'a> ReadBufIter<'a>
 {
-    pub fn next<T>(&mut self) -> std::result::Result<Option<&'a T>, Error> {
+    pub fn next<T: Sized>(&mut self) -> std::result::Result<Option<&'a T>, Error> {
 	if self.buf.is_empty() {
 	    return Ok(None);
 	}
@@ -76,6 +76,30 @@ impl <'a> ReadBufIter<'a>
 	self.consumed += sz;
 
 	Ok(Some(&data[0]))
+    }
+
+    pub fn next_slice<T: Sized>(&mut self, cnt: usize) -> std::result::Result<Option<&'a [T]>, Error> {
+	if self.buf.is_empty() {
+	    return Ok(None);
+	}
+
+	let (head, data, rest) = unsafe {
+	    self.buf.align_to::<T>()
+	};
+
+	if !head.is_empty() {
+	    return Err(Error::Alignment(head.len()));
+	}
+
+	if data.len() < cnt {
+	    return Err(Error::Size(rest.len()));
+	}
+
+	let sz = core::mem::size_of_val(&data[0]) * cnt;
+	self.buf = &self.buf[sz..];
+	self.consumed += sz;
+
+	Ok(Some(&data[..cnt]))
     }
 
     pub fn truncate(&mut self, mut pos: usize) -> Result<usize, Error> {
@@ -130,5 +154,26 @@ mod test {
 	assert_eq!(*iter.next::<u16>().unwrap().unwrap(), 67);
 	assert_eq!(*iter.next::<u16>().unwrap().unwrap(), 68);
 	assert!(iter.next::<u8>().unwrap().is_none());
+    }
+
+    #[test]
+    pub fn test_01() {
+	let mut tmp = Vec::new();
+
+	tmp.extend(23_u64.to_ne_bytes());
+	tmp.extend(42_u32.to_ne_bytes());
+	tmp.extend(66_u16.to_ne_bytes());
+	tmp.extend(67_u16.to_ne_bytes());
+	tmp.extend(68_u16.to_ne_bytes());
+
+	let mut buf = std::io::Cursor::new(tmp);
+	let mut read = ReadBuf::new();
+
+	let mut iter = read.read(&mut buf).unwrap();
+
+	assert_eq!(iter.next_slice::<u64>(1).unwrap().unwrap(), &[23]);
+	assert_eq!(iter.next_slice::<u32>(1).unwrap().unwrap(), &[42]);
+	assert_eq!(iter.next_slice::<u16>(2).unwrap().unwrap(), &[66, 67]);
+	assert_eq!(iter.next_slice::<u16>(1).unwrap().unwrap(), &[68]);
     }
 }

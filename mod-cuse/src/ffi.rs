@@ -30,6 +30,7 @@ impl fuse_opcode {
     pub const FUSE_READ: Self = Self(15);
     pub const FUSE_WRITE: Self = Self(16);
     pub const FUSE_RELEASE: Self = Self(18);
+    pub const FUSE_INTERRUPT: Self = Self(36);
     pub const FUSE_IOCTL: Self = Self(39);
     pub const FUSE_POLL: Self = Self(40);
     pub const CUSE_INIT: Self = Self(4096);
@@ -49,6 +50,40 @@ pub struct fuse_open_out {
     pub fh:		u64,
     pub open_flags:	open_flags,
     pub _padding:	u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_release_in {
+    pub fh:		u64,
+    pub flags:		u32,
+    pub release_flags:	u32,
+    pub lock_owner:	u64,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_write_in {
+    pub fh:		u64,
+    pub offset:		u64,
+    pub size:		u32,
+    pub write_flags:	u32,
+    pub lock_owner:	u64,
+    pub flags:		u32,
+    pub _padding:	u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_write_out {
+    pub size:		u32,
+    pub _padding:	u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_interrupt_in {
+    pub unique:		u64,
 }
 
 #[repr(C)]

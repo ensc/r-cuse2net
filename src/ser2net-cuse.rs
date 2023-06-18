@@ -3,11 +3,12 @@
 #[macro_use]
 extern crate tracing;
 
-use std::{sync::Arc, os::fd::AsRawFd, path::PathBuf, net::SocketAddr};
+use std::sync::Arc;
+use std::net::SocketAddr;
 use ensc_cuse_ffi::{OpIn, KernelVersion};
 
-use nix::sys::socket::SockAddr;
-use r_ser2net::{ Result, DeviceRegistry };
+use r_ser2net::Result;
+use r_ser2net::virtdev::DeviceRegistry;
 
 #[derive(clap::ValueEnum)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,6 +78,8 @@ fn main() -> Result<()> {
     let mut msg = ensc_cuse_ffi::ReadBuf::new();
     let mut is_init = true;
 
+    info!("running ser2net-cuse");
+
     loop {
 	let mut iter = msg.read(&mut f)?;
 
@@ -110,9 +113,13 @@ fn main() -> Result<()> {
 	    OpIn::FuseOpen { flags, open_flags }	=>
 		devices.create(addr, info, flags, open_flags)?,
 
-	    _	=> todo!(),
+	    OpIn::FuseRelease { fh, .. }		=>
+		devices.release(fh)?,
+
+	    op	=> {
+		warn!("unimplemented op {op:?}");
+		info.send_error(f, nix::libc::ENOSYS)?;
+	    }
 	}
     }
-
-    Ok(())
 }

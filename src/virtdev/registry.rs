@@ -81,6 +81,26 @@ impl DeviceRegistry {
 	})))
     }
 
+    pub fn release(&self, fh: u64) -> Result<(), Error> {
+	debug!("registry: releasing {fh}; lock={:?}", self.0.try_read().is_ok());
+
+	let dev = {
+	    let mut reg = self.write().unwrap();
+
+	    reg.devices.remove(&fh)
+	};
+
+	debug!("registry: got a device");
+
+	match dev {
+	    Some(DeviceState::Running(dev))	=> dev.release(),
+	    _	=> {
+		warn!("no such device with fh {fh}");
+		Ok(())
+	    }
+	}
+    }
+
     pub fn create(&self, addr: SocketAddr, op_info: OpInInfo, flags: u32, open_flags: open_flags)
 		  -> Result<(), Error>
     {
@@ -102,7 +122,7 @@ impl DeviceRegistry {
 		let args = super::device::OpenArgs {
 		    addr:		addr,
 		    cuse:		cuse.clone(),
-		    fuse_hdl:	dev_hdl,
+		    fuse_hdl:		dev_hdl,
 		    flags:		flags,
 		};
 
@@ -138,6 +158,10 @@ impl DeviceRegistry {
 	reg.devices.insert(dev_hdl, DeviceOpen {
 	    hdl:	hdl,
 	}.into());
+
+	drop(reg);
+
+	debug!("create: lock={:?}", self.0.try_read().is_ok());
 
 	Ok(())
     }

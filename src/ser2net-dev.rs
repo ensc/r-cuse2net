@@ -2,9 +2,11 @@
 #[macro_use]
 extern crate tracing;
 
-use r_ser2net::{ Result, Error };
+use std::path::{PathBuf};
+use std::net::{TcpStream, TcpListener, SocketAddr};
 
-use std::{path::{PathBuf, Path}, net::{TcpStream, TcpListener, IpAddr, SocketAddr}, sync::{RwLock, Arc}};
+use r_ser2net::{ Result, Error };
+use r_ser2net::realdev;
 
 #[derive(clap::ValueEnum)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,12 +40,20 @@ struct CliOpts {
 fn run_thread(sock: TcpStream, device: PathBuf) -> Result<()> {
     use r_ser2net::proto;
 
-    loop {
-	let op = proto::Request::recv(&sock)?;
+    let op = proto::Request::recv(&sock)?;
+    debug!("running {op:?}");
 
-	debug!("running {op:?}");
+    let dev = match op {
+	proto::Request::Open(args, seq) =>
+	    realdev::Device::open(device, seq, args.flags.as_native(), sock)?,
 
-    }
+	op		=> {
+	    warn!("unexpected operation {op:?}");
+	    return Err(proto::Error::BadRequest.into());
+	}
+    };
+
+    dev.run()
 }
 fn main() -> Result<()> {
     use clap::Parser;
@@ -66,9 +76,13 @@ fn main() -> Result<()> {
 
     let socket = TcpListener::bind(SocketAddr::new(args.listen, args.port))?;
 
+    info!("running ser2net-dev");
+
     loop {
 	let (conn, addr) = socket.accept()?;
 	let device = args.device.clone();
+
+	conn.set_nodelay(true)?;
 
 	info!("connection from {addr:?}");
 
