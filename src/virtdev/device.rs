@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::net::{TcpStream, SocketAddr};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread::JoinHandle;
+
+use parking_lot::RwLock;
 
 use crate::proto::Sequence;
 use crate::{Error, proto};
@@ -125,7 +127,7 @@ impl Device {
 	// hold the write lock until to end; this makes sure that 'Arc::get_mut()'
 	// below sees only one instance.  Threads will do a read lock and start
 	// after completing the initialization.
-	let mut dev = inner.write().unwrap();
+	let mut dev = inner.write();
 
 	let inner_rx = inner.clone();
 	let inner_tx = inner.clone();
@@ -133,13 +135,13 @@ impl Device {
 	let rx_hdl = std::thread::Builder::new()
 	    .name("rx".to_string())
 	    .spawn(move || {
-		DeviceInner::rx_thread(inner_rx.read().unwrap().clone())
+		DeviceInner::rx_thread(inner_rx.read().clone())
 	    })?;
 
 	let tx_hdl = std::thread::Builder::new()
 	    .name("tx".to_string())
 	    .spawn(move || {
-		DeviceInner::tx_thread(inner_tx.read().unwrap().clone())
+		DeviceInner::tx_thread(inner_tx.read().clone())
 	    })?;
 
 	{
@@ -154,7 +156,7 @@ impl Device {
 
     pub fn release(self) -> Result<(), Error>
     {
-	let mut state = self.0.state.write().unwrap();
+	let mut state = self.0.state.write();
 
 	info!("closing device");
 

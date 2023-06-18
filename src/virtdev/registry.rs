@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::os::fd::{AsFd, BorrowedFd};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use ensc_cuse_ffi::OpInInfo;
 use ensc_cuse_ffi::AsBytes;
 
 use ensc_cuse_ffi::ffi::open_flags;
+use parking_lot::RwLock;
 
 use crate::error::Error;
 
@@ -49,7 +50,7 @@ impl ManagedHdl<'_> {
     pub fn commit(mut self, state: DeviceState) {
 	let hdl = self.hdl.take().unwrap();
 
-	self.registry.write().unwrap()
+	self.registry.write()
 	    .devices
 	    .insert(hdl, state);
     }
@@ -58,7 +59,7 @@ impl ManagedHdl<'_> {
 impl std::ops::Drop for ManagedHdl<'_> {
     fn drop(&mut self) {
         if let Some(hdl) = self.hdl {
-	    self.registry.write().unwrap()
+	    self.registry.write()
 		.devices
 		.remove(&hdl);
 	}
@@ -82,15 +83,11 @@ impl DeviceRegistry {
     }
 
     pub fn release(&self, fh: u64) -> Result<(), Error> {
-	debug!("registry: releasing {fh}; lock={:?}", self.0.try_read().is_ok());
-
 	let dev = {
-	    let mut reg = self.write().unwrap();
+	    let mut reg = self.write();
 
 	    reg.devices.remove(&fh)
 	};
-
-	debug!("registry: got a device");
 
 	match dev {
 	    Some(DeviceState::Running(dev))	=> dev.release(),
@@ -107,7 +104,7 @@ impl DeviceRegistry {
 	let registry = self.clone();
 
 	// lock the registry so that thread sees a 'DeviceOpen' in the hash map
-	let mut reg = self.write().unwrap();
+	let mut reg = self.write();
 
 	let dev_hdl = reg.dev_hdl.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -116,7 +113,7 @@ impl DeviceRegistry {
 	let hdl = std::thread::Builder::new()
 	    .name("open".to_string())
 	    .spawn(move || -> Result<(), Error> {
-		let cuse = &registry.read().unwrap().cuse;
+		let cuse = registry.read().cuse.clone();
 		let mngd_hdl = registry.new_managed_hdl(dev_hdl);
 
 		let args = super::device::OpenArgs {
@@ -160,8 +157,6 @@ impl DeviceRegistry {
 	}.into());
 
 	drop(reg);
-
-	debug!("create: lock={:?}", self.0.try_read().is_ok());
 
 	Ok(())
     }
