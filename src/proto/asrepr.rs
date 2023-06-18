@@ -1,5 +1,8 @@
 use std::mem::MaybeUninit;
 
+/// # Safety
+///
+/// Can only be applied to FFI objects without pointers or references
 pub unsafe trait AsReprBytes {
     fn uninit() -> MaybeUninit<Self>
     where
@@ -16,6 +19,9 @@ pub unsafe trait AsReprBytes {
     }
 }
 
+/// # Safety
+///
+/// Can only be applied to FFI objects without pointers or references
 pub unsafe trait AsReprBytesMut: AsReprBytes {
     fn as_repr_bytes_mut(&mut self) -> &mut [u8] {
 	unsafe {

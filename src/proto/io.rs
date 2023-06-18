@@ -109,9 +109,9 @@ fn recv_exact_timeout_internal(fd: RawFd, buf: &mut [MaybeUninit<u8>],
     Ok(buf)
 }
 
-pub fn recv_exact_timeout<'a, R, B>(fd: R, buf: &'a mut MaybeUninit<B>,
-				    to_initial: Option<Duration>, to_cont: Option<Duration>)
-				    -> std::io::Result<&'a B>
+pub fn recv_exact_timeout<R, B>(fd: R, buf: &mut MaybeUninit<B>,
+				to_initial: Option<Duration>, to_cont: Option<Duration>)
+				-> std::io::Result<&B>
 where
     R: AsFd,
     B: super::AsReprBytesMut,

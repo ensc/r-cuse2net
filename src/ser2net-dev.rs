@@ -2,10 +2,10 @@
 #[macro_use]
 extern crate tracing;
 
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::net::{TcpStream, TcpListener, SocketAddr};
 
-use r_ser2net::{ Result, Error };
+use r_ser2net::Result;
 use r_ser2net::realdev;
 
 #[derive(clap::ValueEnum)]
