@@ -5,10 +5,89 @@ pub mod ffi;
 mod error;
 mod io;
 
-use std::{os::fd::{AsFd, BorrowedFd}, io::IoSlice};
+use std::os::fd::AsFd;
+use std::io::IoSlice;
 
 pub use error::Error;
 pub use io::ReadBuf;
+
+pub struct CuseDevice<F: AsFd> {
+    dev:	F,
+}
+
+impl <F: AsFd + std::fmt::Debug> std::fmt::Debug for CuseDevice<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CuseDevice").field("dev", &self.dev).finish()
+    }
+}
+
+impl <F: AsFd + std::io::Read> CuseDevice<F> {
+    pub fn reader(&self) -> &F {
+	&self.dev
+    }
+
+    pub fn reader_mut(&mut self) -> &mut F {
+	&mut self.dev
+    }
+}
+
+impl <F: AsFd> CuseDevice<F> {
+    pub fn new(dev: F) -> Self {
+	Self {
+	    dev: dev
+	}
+    }
+
+    fn send(&self, data: &[IoSlice], total_len: usize) -> Result<(), Error> {
+	use std::os::fd::AsRawFd;
+
+	let fd = self.dev.as_fd().as_raw_fd();
+	let sent_len = nix::sys::uio::writev(fd, data)?;
+
+	if sent_len != total_len {
+	    return Err(Error::BadSend(sent_len, total_len));
+	}
+
+	Ok(())
+    }
+
+    pub fn send_error(&self, unique: u64, rc: nix::libc::c_int) -> Result<(), Error>
+    {
+	let hdr = ffi::fuse_out_header {
+	    len:	core::mem::size_of::<ffi::fuse_out_header>() as u32,
+	    error:	rc,
+	    unique:	unique
+	};
+
+	let iov = [
+	    IoSlice::new(hdr.as_bytes())
+	];
+
+	self.send(&iov, hdr.len as usize)
+    }
+
+    pub fn send_response(&self, unique: u64, data: &[&[u8]]) -> Result<(), Error>
+    {
+	let len = data.iter().fold(core::mem::size_of::<ffi::fuse_out_header>(),
+				   |acc, a| acc + a.len());
+
+	let hdr = ffi::fuse_out_header {
+	    len:	len as u32,
+	    error:	0,
+	    unique:	unique
+	};
+
+	let mut iov = Vec::with_capacity(data.len() + 1);
+
+	iov.push(IoSlice::new(hdr.as_bytes()));
+
+	for d in data {
+	    iov.push(IoSlice::new(d));
+	}
+
+	self.send(&iov, len)
+    }
+}
 
 pub trait AsBytes {
     fn as_bytes(&self) -> &[u8] {
@@ -50,55 +129,14 @@ pub struct OpInInfo {
 }
 
 impl OpInInfo {
-    fn send(&self, fd: BorrowedFd, data: &[IoSlice], total_len: usize) -> Result<(), Error> {
-	use std::os::fd::AsRawFd;
-
-	let fd = fd.as_raw_fd();
-	let sent_len = nix::sys::uio::writev(fd, data)?;
-
-	if sent_len != total_len {
-	    return Err(Error::BadSend(sent_len, total_len));
-	}
-
-	Ok(())
+    pub fn send_error<W: AsFd>(&self, w: &CuseDevice<W>, rc: nix::libc::c_int) -> Result<(), Error>
+    {
+	w.send_error(self.unique, rc)
     }
 
-
-    pub fn send_error<W: AsFd>(&self, w: W, rc: nix::libc::c_int) -> Result<(), Error>
+    pub fn send_response<W: AsFd>(&self, w: &CuseDevice<W>, data: &[&[u8]]) -> Result<(), Error>
     {
-	let hdr = ffi::fuse_out_header {
-	    len:	core::mem::size_of::<ffi::fuse_out_header>() as u32,
-	    error:	rc,
-	    unique:	self.unique
-	};
-
-	let iov = [
-	    IoSlice::new(hdr.as_bytes())
-	];
-
-	self.send(w.as_fd(), &iov, hdr.len as usize)
-    }
-
-    pub fn send_response<W: AsFd>(&self, w: W, data: &[&[u8]]) -> Result<(), Error>
-    {
-	let len = data.iter().fold(core::mem::size_of::<ffi::fuse_out_header>(),
-				   |acc, a| acc + a.len());
-
-	let hdr = ffi::fuse_out_header {
-	    len:	len as u32,
-	    error:	0,
-	    unique:	self.unique
-	};
-
-	let mut iov = Vec::with_capacity(data.len() + 1);
-
-	iov.push(IoSlice::new(hdr.as_bytes()));
-
-	for d in data {
-	    iov.push(IoSlice::new(d));
-	}
-
-	self.send(w.as_fd(), &iov, len)
+	w.send_response(self.unique, data)
     }
 }
 

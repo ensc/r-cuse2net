@@ -4,7 +4,7 @@ use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc};
 use std::thread::JoinHandle;
 
-use ensc_cuse_ffi::OpInInfo;
+use ensc_cuse_ffi::{OpInInfo, CuseDevice};
 use parking_lot::{Condvar, RwLock, Mutex};
 
 use crate::proto::Sequence;
@@ -26,7 +26,7 @@ struct State {
 }
 
 struct DeviceInner {
-    cuse:		Arc<File>,
+    cuse:		Arc<CuseDevice<File>>,
     rx_hdl:		Option<JoinHandle<()>>,
     tx_hdl:		Option<JoinHandle<()>>,
     fuse_hdl:		u64,
@@ -157,7 +157,7 @@ pub struct Device(Arc<DeviceInner>);
 #[derive(Debug)]
 pub(super) struct OpenArgs {
     pub addr:		SocketAddr,
-    pub cuse:		Arc<File>,
+    pub cuse:		Arc<CuseDevice<File>>,
     pub fuse_hdl:	u64,
     pub flags:		u32,
 }

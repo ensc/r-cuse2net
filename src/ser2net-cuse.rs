@@ -5,7 +5,7 @@ extern crate tracing;
 
 use std::sync::Arc;
 use std::net::SocketAddr;
-use ensc_cuse_ffi::{OpIn, KernelVersion};
+use ensc_cuse_ffi::{OpIn, KernelVersion, CuseDevice};
 
 use r_ser2net::Result;
 use r_ser2net::virtdev::DeviceRegistry;
@@ -68,12 +68,12 @@ fn main() -> Result<()> {
 	.write(true)
 	.read(true)
 	.open("/dev/cuse")
-	.map(Arc::new)?;
+	.map(|d| Arc::new(CuseDevice::new(d)))?;
 
     let devices = DeviceRegistry::new(cuse.clone());
     let addr = args.server;
 
-    let mut f = cuse.as_ref();
+    let f = cuse.as_ref();
 
     let mut msg = ensc_cuse_ffi::ReadBuf::new();
     let mut is_init = true;
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
     r_ser2net::deadlock_detect();
 
     loop {
-	let mut iter = msg.read(&mut f)?;
+	let mut iter = msg.read(&mut f.reader())?;
 
 	let (info, op) = ensc_cuse_ffi::OpIn::read(&mut iter).unwrap();
 

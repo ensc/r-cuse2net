@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::net::SocketAddr;
-use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use ensc_cuse_ffi::OpInInfo;
+use ensc_cuse_ffi::{OpInInfo, CuseDevice};
 use ensc_cuse_ffi::AsBytes;
 
 use ensc_cuse_ffi::ffi::open_in_flags;
@@ -17,17 +16,17 @@ use super::{ DeviceState, DeviceOpen, Device };
 pub struct DeviceRegistryInner {
     dev_hdl:	AtomicU64,
     devices:	HashMap<u64, DeviceState>,
-    cuse:	Arc<File>,
+    cuse:	Arc<CuseDevice<File>>,
 }
 
 impl DeviceRegistryInner {
-    pub fn get_cuse(&self) -> &File {
+    pub fn get_cuse(&self) -> &CuseDevice<File> {
 	self.cuse.as_ref()
     }
 
-    pub fn get_cuse_fd(&self) -> BorrowedFd {
-	self.cuse.as_fd()
-    }
+//    pub fn get_cuse_fd(&self) -> BorrowedFd {
+//	self.cuse.as_fd()
+//    }
 }
 
 #[derive(Clone)]
@@ -74,7 +73,7 @@ impl DeviceRegistry {
 	}
     }
 
-    pub fn new(cuse: Arc<File>) -> Self {
+    pub fn new(cuse: Arc<CuseDevice<File>>) -> Self {
 	Self(Arc::new(RwLock::new(DeviceRegistryInner {
 	    dev_hdl:	AtomicU64::new(1),
 	    devices:	HashMap::new(),
@@ -131,7 +130,7 @@ impl DeviceRegistry {
 			    _padding:	Default::default(),
 			};
 
-			op_info.send_response(cuse.as_fd(), &[
+			op_info.send_response(&cuse, &[
 			    hdr.as_bytes()
 			])?;
 
@@ -145,7 +144,7 @@ impl DeviceRegistry {
 
 			drop(mngd_hdl);
 
-			let _ = op_info.send_error(cuse.as_fd(), -nix::libc::EIO);
+			let _ = op_info.send_error(&cuse, -nix::libc::EIO);
 
 			Err(e)
 		    }
