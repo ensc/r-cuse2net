@@ -80,6 +80,8 @@ fn main() -> Result<()> {
 
     info!("running ser2net-cuse");
 
+    r_ser2net::deadlock_detect();
+
     loop {
 	let mut iter = msg.read(&mut f)?;
 
@@ -114,7 +116,7 @@ fn main() -> Result<()> {
 		devices.create(addr, info, flags, open_flags)?,
 
 	    OpIn::FuseRelease { fh, .. }		=>
-		devices.release(fh)?,
+		devices.release(fh, info)?,
 
 	    op	=> {
 		warn!("unimplemented op {op:?}");

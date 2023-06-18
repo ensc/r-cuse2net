@@ -143,7 +143,7 @@ impl Request {
 	let info = Release {
 	};
 
-	let hdr = Header::new(RequestCode::Open, &info);
+	let hdr = Header::new(RequestCode::Release, &info);
 	let seq = hdr.seq()?;
 
 	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),

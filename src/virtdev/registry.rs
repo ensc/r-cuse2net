@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 use ensc_cuse_ffi::OpInInfo;
 use ensc_cuse_ffi::AsBytes;
 
-use ensc_cuse_ffi::ffi::open_flags;
+use ensc_cuse_ffi::ffi::open_in_flags;
 use parking_lot::RwLock;
 
 use crate::error::Error;
@@ -82,7 +82,7 @@ impl DeviceRegistry {
 	})))
     }
 
-    pub fn release(&self, fh: u64) -> Result<(), Error> {
+    pub fn release(&self, fh: u64, info: OpInInfo) -> Result<(), Error> {
 	let dev = {
 	    let mut reg = self.write();
 
@@ -90,7 +90,7 @@ impl DeviceRegistry {
 	};
 
 	match dev {
-	    Some(DeviceState::Running(dev))	=> dev.release(),
+	    Some(DeviceState::Running(dev))	=> dev.release(info),
 	    _	=> {
 		warn!("no such device with fh {fh}");
 		Ok(())
@@ -98,7 +98,7 @@ impl DeviceRegistry {
 	}
     }
 
-    pub fn create(&self, addr: SocketAddr, op_info: OpInInfo, flags: u32, open_flags: open_flags)
+    pub fn create(&self, addr: SocketAddr, op_info: OpInInfo, flags: u32, open_in_flags: open_in_flags)
 		  -> Result<(), Error>
     {
 	let registry = self.clone();
@@ -127,7 +127,7 @@ impl DeviceRegistry {
 		    Ok(dev)		=> {
 			let hdr = ensc_cuse_ffi::ffi::fuse_open_out {
 			    fh:		dev_hdl,
-			    open_flags:	open_flags,
+			    open_flags:	open_in_flags,
 			    _padding:	Default::default(),
 			};
 

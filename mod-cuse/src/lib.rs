@@ -118,9 +118,9 @@ impl From<&ffi::fuse_in_header> for OpInInfo {
 #[derive(Debug, Clone)]
 pub enum OpIn<'a> {
     Unknown,
-    CuseInit{ version: KernelVersion, flags: ffi::flags },
-    FuseOpen{ flags: u32, open_flags: ffi::open_flags },
-    FuseRelease { fh: u64, flags: u32, release_flags: u32, lock_owner: u64 },
+    CuseInit{ version: KernelVersion, flags: ffi::cuse_flags },
+    FuseOpen{ flags: u32, open_flags: ffi::open_in_flags },
+    FuseRelease { fh: u64, flags: u32, release_flags: ffi::release_flags, lock_owner: u64 },
     FuseWrite{ fh: u64, offset: u64, write_flags: u32, lock_owner: u64, flags: u32, data: &'a[u8] },
     FuseInterrupt { unique: u64 },
 }

@@ -47,6 +47,8 @@ impl Device {
 	loop {
 	    let op = proto::Request::recv(&self.conn)?;
 
+	    debug!("got {op:?}");
+
 	    match op {
 		proto::Request::Open(_, seq) => {
 		    warn!("can not open an already opened device");

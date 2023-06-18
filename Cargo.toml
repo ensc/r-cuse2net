@@ -25,4 +25,4 @@ tracing = { version = "*", features = ["max_level_trace", "release_max_level_inf
 tracing-subscriber = { version = "*", features = ["json", "env-filter"] }
 nix = "*"
 clap = { version = "*", features = ["derive", "color", "std", "wrap_help"] }
-parking_lot = "*"
+parking_lot = { version = "*", features = ["deadlock_detection"] }

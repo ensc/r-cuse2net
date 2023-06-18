@@ -1,60 +1,154 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::net::{TcpStream, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc};
 use std::thread::JoinHandle;
 
-use parking_lot::RwLock;
+use ensc_cuse_ffi::OpInInfo;
+use parking_lot::{Condvar, RwLock, Mutex};
 
 use crate::proto::Sequence;
 use crate::{Error, proto};
 
 use super::CONNECT_TIMEOUT;
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 enum Request {
     Release,
 }
 
 #[derive(Default)]
 struct State {
-    closing:	bool,
-    requests:	HashMap<Sequence, Request>,
+    closing:		bool,
+    closed:		bool,
+    requests:		HashMap<Sequence, (Request, OpInInfo)>,
+    pending:		VecDeque<(Request, OpInInfo)>,
 }
 
 struct DeviceInner {
-    cuse:	Arc<File>,
-    rx_hdl:	Option<JoinHandle<()>>,
-    tx_hdl:	Option<JoinHandle<()>>,
-    fuse_hdl:	u64,
-    conn:	TcpStream,
-    flags:	u32,
-    state:	RwLock<State>,
+    cuse:		Arc<File>,
+    rx_hdl:		Option<JoinHandle<()>>,
+    tx_hdl:		Option<JoinHandle<()>>,
+    fuse_hdl:		u64,
+    conn:		TcpStream,
+    flags:		u32,
+    state:		RwLock<State>,
+    state_change:	Condvar,
+    state_mutex:	Mutex<()>,
 }
 
 impl DeviceInner {
+    fn is_closed(&self) -> bool {
+	self.state.read().closed
+    }
+
+    fn is_closing(&self) -> bool {
+	self.state.read().closing
+    }
+
+    fn remove_request(&self, seq: Sequence) -> Option<(Request, OpInInfo)> {
+	self.state.write().requests.remove(&seq)
+    }
+
+    #[instrument(level="trace", skip(self), ret)]
+    fn handle_response(&self, seq: Sequence, resp: proto::Response) -> crate::Result<()> {
+	debug!("got response for seq {seq:?}");
+
+	match self.remove_request(seq) {
+	    None				=> warn!("no such request {seq:?}"),
+	    Some((Request::Release, info))	=> {
+		self.state.write().closed = true;
+		info.send_error(&self.cuse, 0)?;
+	    }
+	}
+
+	Ok(())
+    }
+
     fn rx_thread(self: Arc<Self>) {
 	info!("rx_thread running");
 
-	loop {
+	while !self.is_closed() {
 	    let op = proto::Response::recv(&self.conn);
 	    debug!("rx: got {op:?}");
 
 	    match op {
-		Ok(_r)	=> {
-		    todo!()
-		}
+		Ok((Some(seq), resp))	=> {
+		    if let Err(e) = self.handle_response(seq, resp) {
+			warn!("failed to process request: {e:?}");
+		    }
+		},
 
-		Err(e)	=> {
+		Ok((None, _))		=> warn!("no sequence received"),
+		Err(e)			=> {
 		    warn!("error {e:?}");
 		    break;
 		}
+	    };
+	}
+
+	let _ = self.conn.shutdown(std::net::Shutdown::Both);
+
+	info!("rx_thread terminated");
+    }
+
+    #[instrument(level="trace", skip(self), ret)]
+    fn handle_cuse(&self, req: Request, info: OpInInfo) -> Result<(), (OpInInfo, Error)> {
+	debug!("tx thread: handle {req:?}");
+
+	let mut state = self.state.write();
+
+	trace!("got state");
+
+	let seq = match req {
+	    Request::Release	=> {
+		state.closing = true;
+		proto::Request::send_release(&self.conn)
+	    }
+	};
+
+	trace!("seq = {seq:?}");
+
+	match seq {
+	    Err(e)	=> Err((info, e.into())),
+	    Ok(seq)	=> {
+		state.requests.insert(seq, (req, info));
+		Ok(())
 	    }
 	}
     }
 
+    fn next_pending(&self) -> Option<(Request, OpInInfo)> {
+	self.state.write().pending.pop_front()
+    }
+
     fn tx_thread(self: Arc<Self>) {
 	info!("tx_thread running");
+
+	loop {
+	    trace!("tx: processing pending commands");
+
+	    while let Some((req, info)) = self.next_pending() {
+		match self.handle_cuse(req, info) {
+		    Ok(_)		=> {},
+		    Err((info, e))	=> {
+			warn!("failed to handle request {req:?}: {e:?}");
+			let _ = info.send_error(&self.cuse, nix::libc::EIO);
+		    }
+		}
+	    }
+
+	    if self.is_closing() {
+		break;
+	    }
+
+	    trace!("tx: waiting for new data");
+
+	    let mut lock = self.state_mutex.lock();
+	    self.state_change.wait(&mut lock);
+	}
+
+	info!("tx_thread terminated");
     }
 }
 
@@ -112,14 +206,16 @@ impl Device {
 	Self::run_remote_open(&conn, args.flags)?;
 
 	let inner = Arc::new(DeviceInner {
-	    cuse:	args.cuse,
-	    fuse_hdl:	args.fuse_hdl,
-	    flags:	args.flags,
-	    conn:	conn,
-	    state:	Default::default(),
+	    cuse:		args.cuse,
+	    fuse_hdl:		args.fuse_hdl,
+	    flags:		args.flags,
+	    conn:		conn,
+	    state:		Default::default(),
+	    state_change:	Condvar::new(),
+	    state_mutex:	Mutex::new(()),
 
-	    rx_hdl:	None,
-	    tx_hdl:	None,
+	    rx_hdl:		None,
+	    tx_hdl:		None,
 	});
 
 	let inner = Arc::new(RwLock::new(inner));
@@ -154,19 +250,13 @@ impl Device {
 	Ok(Self(dev.clone()))
     }
 
-    pub fn release(self) -> Result<(), Error>
+    pub fn release(self, info: OpInInfo) -> Result<(), Error>
     {
-	let mut state = self.0.state.write();
-
 	info!("closing device");
 
-	state.closing = true;
-
-	let seq = proto::Request::send_release(&self.0.conn)?;
-
-	state.requests.insert(seq, Request::Release);
+	self.0.state.write().pending.push_back((Request::Release, info));
+	self.0.state_change.notify_all();
 
 	Ok(())
     }
-
 }
