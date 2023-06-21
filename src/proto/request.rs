@@ -1,3 +1,4 @@
+use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicU64;
 use std::io::IoSlice;
 use std::os::fd::AsFd;
@@ -13,6 +14,7 @@ static OP_SEQ: AtomicU64 = AtomicU64::new(1);
 pub enum RequestCode {
     Open = 1,
     Release = 2,
+    Write = 3,
 }
 
 impl RequestCode {
@@ -24,40 +26,56 @@ impl RequestCode {
 	Some(match v {
 	    1	=> Self::Open,
 	    2	=> Self::Release,
+	    3	=> Self::Write,
 	    _	=> return None,
 	})
     }
 }
 
 #[derive(Debug)]
-pub enum Request {
+pub enum Request<'a> {
     Open(Open, Sequence),
     Release(Sequence),
+    Write(Sequence, Write, &'a[u8]),
 }
 
-impl Request {
+impl <'a> Request<'a> {
     const MAX_SZ: usize = 0x1_0000;
 
-    #[instrument(level="trace", skip(r), ret)]
-    pub fn recv<R: AsFd + std::io::Read>(r: R) -> Result<Self> {
+    #[instrument(level="trace", skip(r, tmp_buf), ret)]
+    pub fn recv<R: AsFd + std::io::Read>(r: R, tmp_buf: &'a mut [MaybeUninit<u8>]) -> Result<Self> {
 	let mut hdr = Header::uninit();
 
-	let hdr = recv_exact_timeout(&r, &mut hdr, None, Some(TIMEOUT_READ))?;
+	let hdr = recv_exact_timeout(&r, &mut hdr, &mut None, None, Some(TIMEOUT_READ))?;
+	debug!("hdr={hdr:?}");
 	let len = hdr.len();
 
 	if len > Self::MAX_SZ {
 	    return Err(Error::PayloadTooLarge(len));
 	}
 
+	let mut rx_len = Some(len);
+
 	let op = hdr.op();
 	let op = RequestCode::try_from_u8(op)
 	    .ok_or(Error::BadOp(op))?;
 	let seq = hdr.seq()?;
 
-	Ok(match op {
-	    RequestCode::Open		=> Self::Open(recv_to(r, Open::uninit())?, seq),
+	let res = match op {
+	    RequestCode::Open		=> Self::Open(recv_to(r, Open::uninit(), &mut rx_len)?, seq),
 	    RequestCode::Release	=> Self::Release(seq),
-	})
+	    RequestCode::Write		=> {
+		let wrinfo = recv_to(&r, Write::uninit(), &mut rx_len)?;
+		let rxbuf = &mut tmp_buf[0..*rx_len.as_ref().unwrap()];
+		debug!("wrinfo={wrinfo:?}, buf#={}", rxbuf.len());
+		let rxbuf = unsafe {
+		    core::mem::transmute(rxbuf)
+		};
+		Self::Write(seq, wrinfo, recv_to::<_, &mut [u8]>(&r, rxbuf, &mut rx_len)?)
+	    }
+	};
+
+	Ok(res)
     }
 }
 
@@ -72,7 +90,11 @@ pub struct Header {
 
 impl Header{
     pub fn new<T: Sized>(op: RequestCode, payload: &T) -> Self {
-	let len = core::mem::size_of_val(payload) as u32;
+	Self::with_payload(op, payload, &[])
+    }
+
+    pub fn with_payload<T: Sized>(op: RequestCode, payload: &T, data: &[u8]) -> Self {
+	let len = (core::mem::size_of_val(payload) + data.len()) as u32;
 
 	Self {
 	    op:		op.as_u8().into(),
@@ -80,6 +102,7 @@ impl Header{
 	    len:	len.into(),
 	    .. Default::default()
 	}
+
     }
 
     pub fn op(&self) -> u8 {
@@ -111,7 +134,7 @@ pub struct Open {
 unsafe impl AsReprBytes for Open {}
 unsafe impl AsReprBytesMut for Open {}
 
-impl Request {
+impl Request<'_> {
     #[instrument(level="trace", skip(w), ret)]
     pub fn send_open<W: AsFd + std::io::Write>(w: W, flags: u32) -> Result<Sequence> {
 	let info = Open {
@@ -137,7 +160,7 @@ pub struct Release {
 unsafe impl AsReprBytes for Release {}
 unsafe impl AsReprBytesMut for Release {}
 
-impl Request {
+impl Request<'_> {
     #[instrument(level="trace", skip(w), ret)]
     pub fn send_release<W: AsFd + std::io::Write>(w: W) -> Result<Sequence> {
 	let info = Release {
@@ -148,6 +171,33 @@ impl Request {
 
 	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
 				IoSlice::new(info.as_repr_bytes()) ])?;
+
+	Ok(seq)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct Write {
+    pub offset:	be64,
+}
+
+unsafe impl AsReprBytes for Write {}
+unsafe impl AsReprBytesMut for Write {}
+
+impl Request<'_> {
+    #[instrument(level="trace", skip(w), ret)]
+    pub fn send_write<W: AsFd + std::io::Write>(w: W, offset: u64, data: &[u8]) -> Result<Sequence> {
+	let info = Write {
+	    offset:	offset.into(),
+	};
+
+	let hdr = Header::with_payload(RequestCode::Write, &info, data);
+	let seq = hdr.seq()?;
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(info.as_repr_bytes()),
+				IoSlice::new(data) ])?;
 
 	Ok(seq)
     }

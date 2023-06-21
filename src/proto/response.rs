@@ -1,7 +1,8 @@
+use std::io::IoSlice;
 use std::os::fd::AsFd;
 use std::time::Duration;
 
-use super::io::{recv_exact_timeout, send_all};
+use super::io::{recv_to, recv_exact_timeout, send_all, send_vectored_all};
 use super::{Sequence, Result, AsReprBytes, AsReprBytesMut, TIMEOUT_READ, Error};
 use super::endian::*;
 
@@ -9,6 +10,7 @@ use super::endian::*;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ResponseCode {
     Result = 1,
+    Write = 2,
 }
 
 impl ResponseCode {
@@ -19,6 +21,7 @@ impl ResponseCode {
     pub fn try_from_u8(v: u8) -> Option<Self> {
 	Some(match v {
 	    1	=> Self::Result,
+	    2	=> Self::Write,
 	    _	=> return None,
 	})
     }
@@ -27,10 +30,29 @@ impl ResponseCode {
 #[derive(Debug)]
 pub enum Response {
     Ok,
+    Write(u32),
 }
 
 impl Response {
     const MAX_SZ: usize = 0x1_0000;
+
+    #[instrument(level="trace", skip(w))]
+    pub fn send_write<W: AsFd + std::io::Write>(w: W, seq: Sequence, size: u32) -> Result<()> {
+	let wrinfo: be32 = size.into();
+	let hdr = Header {
+	    op:		ResponseCode::Write.as_u8().into(),
+	    err:	0.into(),
+	    len:	(core::mem::size_of_val(&wrinfo) as u32).into(),
+	    seq:	seq.0.into(),
+	    ..Default::default()
+	};
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(wrinfo.as_repr_bytes()) ])?;
+
+	Ok(())
+    }
+
 
     #[instrument(level="trace", skip(w))]
     pub fn send_err<W: AsFd + std::io::Write>(w: W, seq: Sequence, err: i32) -> Result<()> {
@@ -65,12 +87,14 @@ impl Response {
     fn recv_internal<R: AsFd + std::io::Read>(r: R, to: Option<Duration>) -> Result<(Option<Sequence>, Self)> {
 	let mut hdr = Header::uninit();
 
-	let hdr = recv_exact_timeout(&r, &mut hdr, to, Some(TIMEOUT_READ))?;
+	let hdr = recv_exact_timeout(&r, &mut hdr, &mut None, to, Some(TIMEOUT_READ))?;
 	let len = hdr.len();
 
 	if len > Self::MAX_SZ {
 	    return Err(Error::PayloadTooLarge(len));
 	}
+
+	let mut rx_len = Some(len);
 
 	let op = hdr.op();
 	let op = ResponseCode::try_from_u8(op).
@@ -85,7 +109,12 @@ impl Response {
 	    ResponseCode::Result if hdr.len() == 0	=>
 		Self::Ok,
 
-	    _		=> {
+	    ResponseCode::Write				=> {
+		let sz: u64 = recv_to(&r, be64::uninit(), &mut rx_len)?.into();
+		Self::Write(sz.try_into()?)
+	    }
+
+	    ResponseCode::Result			=> {
 		warn!("bad response {hdr:?}");
 		return Err(Error::BadResponse);
 	    }

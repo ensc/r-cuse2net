@@ -1,7 +1,9 @@
+#![allow(clippy::redundant_field_names)]
 //
 #[macro_use]
 extern crate tracing;
 
+use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::net::{TcpStream, TcpListener, SocketAddr};
 
@@ -40,16 +42,20 @@ struct CliOpts {
 fn run_thread(sock: TcpStream, device: PathBuf) -> Result<()> {
     use r_ser2net::proto;
 
-    let op = proto::Request::recv(&sock)?;
-    debug!("running {op:?}");
+    let dev = {
+	let mut buf: [MaybeUninit<u8>; proto::MAX_MSG_SIZE] = [MaybeUninit::uninit(); proto::MAX_MSG_SIZE];
 
-    let dev = match op {
-	proto::Request::Open(args, seq) =>
-	    realdev::Device::open(device, seq, args.flags.as_native(), sock)?,
+	let op = proto::Request::recv(&sock, &mut buf)?;
+	debug!("running {op:?}");
 
-	op		=> {
-	    warn!("unexpected operation {op:?}");
-	    return Err(proto::Error::BadRequest.into());
+	match op {
+	    proto::Request::Open(args, seq) =>
+		realdev::Device::open(device, seq, args.flags.as_native(), sock)?,
+
+	    op		=> {
+		warn!("unexpected operation {op:?}");
+		return Err(proto::Error::BadRequest.into());
+	    }
 	}
     };
 

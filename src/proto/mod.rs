@@ -9,6 +9,7 @@ mod response;
 use std::{time::Duration, os::fd::AsFd};
 
 const TIMEOUT_READ: Duration = Duration::from_secs(3);
+pub const MAX_MSG_SIZE: usize = 128 * 1024;
 
 pub use endian::*;
 

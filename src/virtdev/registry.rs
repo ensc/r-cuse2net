@@ -1,26 +1,26 @@
 use std::collections::HashMap;
-use std::fs::File;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use ensc_cuse_ffi::{OpInInfo, CuseDevice};
+use ensc_cuse_ffi::{OpInInfo};
 use ensc_cuse_ffi::AsBytes;
 
 use ensc_cuse_ffi::ffi::open_in_flags;
 use parking_lot::RwLock;
 
 use crate::error::Error;
+use crate::CuseFileDevice;
 
 use super::{ DeviceState, DeviceOpen, Device };
 
 pub struct DeviceRegistryInner {
     dev_hdl:	AtomicU64,
     devices:	HashMap<u64, DeviceState>,
-    cuse:	Arc<CuseDevice<File>>,
+    cuse:	Arc<CuseFileDevice>,
 }
 
 impl DeviceRegistryInner {
-    pub fn get_cuse(&self) -> &CuseDevice<File> {
+    pub fn get_cuse(&self) -> &CuseFileDevice {
 	self.cuse.as_ref()
     }
 
@@ -73,7 +73,7 @@ impl DeviceRegistry {
 	}
     }
 
-    pub fn new(cuse: Arc<CuseDevice<File>>) -> Self {
+    pub fn new(cuse: Arc<CuseFileDevice>) -> Self {
 	Self(Arc::new(RwLock::new(DeviceRegistryInner {
 	    dev_hdl:	AtomicU64::new(1),
 	    devices:	HashMap::new(),
@@ -81,7 +81,20 @@ impl DeviceRegistry {
 	})))
     }
 
-    pub fn release(&self, fh: u64, info: OpInInfo) -> Result<(), Error> {
+    pub fn for_fh<F: FnOnce(&Device)>(&self, fh: u64, func: F) {
+	match self.read().devices.get(&fh) {
+	    None	=>
+		warn!("no such device {fh}"),
+
+	    Some(DeviceState::Opening(_))	=>
+		warn!("device {fh} not ready yet"),
+
+	    Some(DeviceState::Running(d))	=>
+		func(d),
+	}
+    }
+
+    pub fn release(&self, fh: u64, info: OpInInfo) {
 	let dev = {
 	    let mut reg = self.write();
 
@@ -90,10 +103,7 @@ impl DeviceRegistry {
 
 	match dev {
 	    Some(DeviceState::Running(dev))	=> dev.release(info),
-	    _	=> {
-		warn!("no such device with fh {fh}");
-		Ok(())
-	    }
+	    _					=> warn!("no such device with fh {fh}"),
 	}
     }
 

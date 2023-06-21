@@ -5,9 +5,9 @@ extern crate tracing;
 
 use std::sync::Arc;
 use std::net::SocketAddr;
-use ensc_cuse_ffi::{OpIn, KernelVersion, CuseDevice};
+use ensc_cuse_ffi::{OpIn, KernelVersion};
 
-use r_ser2net::Result;
+use r_ser2net::{ Result, CuseFileDevice, virtdev };
 use r_ser2net::virtdev::DeviceRegistry;
 
 #[derive(clap::ValueEnum)]
@@ -68,7 +68,7 @@ fn main() -> Result<()> {
 	.write(true)
 	.read(true)
 	.open("/dev/cuse")
-	.map(|d| Arc::new(CuseDevice::new(d)))?;
+	.map(|d| Arc::new(CuseFileDevice::new(d)))?;
 
     let devices = DeviceRegistry::new(cuse.clone());
     let addr = args.server;
@@ -116,11 +116,22 @@ fn main() -> Result<()> {
 		devices.create(addr, info, flags, open_flags)?,
 
 	    OpIn::FuseRelease { fh, .. }		=>
-		devices.release(fh, info)?,
+		devices.release(fh, info),
+
+	    OpIn::FuseWrite { fh, offset, write_flags, lock_owner: _, flags, data } => {
+		let write_info = virtdev::device::WriteInfo {
+		    offset:		offset,
+		    write_flags:	write_flags,
+		    flags:		flags,
+		    data:		data.into(),
+		};
+
+		devices.for_fh(fh, |dev| dev.write(info, write_info));
+	    }
 
 	    op	=> {
 		warn!("unimplemented op {op:?}");
-		info.send_error(f, nix::libc::ENOSYS)?;
+		let _ = info.send_error(f, nix::libc::ENOSYS);
 	    }
 	}
     }

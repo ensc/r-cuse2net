@@ -1,3 +1,5 @@
+#![allow(clippy::redundant_field_names)]
+
 #[macro_use]
 extern crate tracing;
 
@@ -100,6 +102,7 @@ pub trait AsBytes {
 
 impl AsBytes for ffi::fuse_out_header {}
 impl AsBytes for ffi::fuse_open_out {}
+impl AsBytes for ffi::fuse_write_out {}
 impl AsBytes for ffi::cuse_init_out {}
 
 #[derive(Debug, Clone)]
@@ -159,7 +162,8 @@ pub enum OpIn<'a> {
     CuseInit{ version: KernelVersion, flags: ffi::cuse_flags },
     FuseOpen{ flags: u32, open_flags: ffi::open_in_flags },
     FuseRelease { fh: u64, flags: u32, release_flags: ffi::release_flags, lock_owner: u64 },
-    FuseWrite{ fh: u64, offset: u64, write_flags: u32, lock_owner: u64, flags: u32, data: &'a[u8] },
+    FuseWrite{ fh: u64, offset: u64, write_flags: ffi::write_flags,
+	       lock_owner: u64, flags: u32, data: &'a[u8] },
     FuseInterrupt { unique: u64 },
 }
 

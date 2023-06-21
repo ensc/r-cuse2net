@@ -9,9 +9,11 @@ pub mod virtdev;
 pub mod realdev;
 pub mod proto;
 
+use ensc_cuse_ffi::CuseDevice;
 pub use error::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub type CuseFileDevice = CuseDevice<std::fs::File>;
 
 pub fn deadlock_detect() {
     use std::thread;

@@ -21,11 +21,20 @@ macro_rules! declare_endian {
 	    }
 	}
 
+	impl From<$name> for $type {
+	    fn from(value: $name) -> Self {
+		value.as_native()
+	    }
+	}
+
 	impl std::fmt::Debug for $name {
 	    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		self.as_native().fmt(f)
 	    }
 	}
+
+	unsafe impl $crate::proto::AsReprBytes for $name {}
+	unsafe impl $crate::proto::AsReprBytesMut for $name {}
     };
 }
 

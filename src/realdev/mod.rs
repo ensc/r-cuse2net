@@ -1,6 +1,7 @@
 //
 
-use std::os::fd::{OwnedFd, FromRawFd};
+use std::mem::MaybeUninit;
+use std::os::fd::{OwnedFd, FromRawFd, AsRawFd};
 use std::path::Path;
 use std::net::TcpStream;
 
@@ -44,8 +45,11 @@ impl Device {
 
     pub fn run(self) -> crate::Result<()> {
 	debug!("running device");
+
+	let mut buf: [MaybeUninit<u8>; proto::MAX_MSG_SIZE] = [MaybeUninit::uninit(); proto::MAX_MSG_SIZE];
+
 	loop {
-	    let op = proto::Request::recv(&self.conn)?;
+	    let op = proto::Request::recv(&self.conn, &mut buf)?;
 
 	    debug!("got {op:?}");
 
@@ -59,7 +63,22 @@ impl Device {
 		    seq.send_ok(&self.conn)?;
 		    break Ok(());
 		}
+
+		proto::Request::Write(seq, wrinfo, data)	=> {
+		    self.write(seq, wrinfo.offset.into(), data)?;
+		}
 	    }
 	}
+    }
+
+    fn write(&self, seq: Sequence, offset: u64, data: &[u8]) -> crate::Result<()> {
+	let l = nix::sys::uio::pwrite(self.fd.as_raw_fd(), data, offset as nix::libc::off_t);
+
+	match l {
+	    Ok(l)	=> proto::Response::send_write(&self.conn, seq, l as u32),
+	    Err(e)	=> proto::Response::send_err(&self.conn, seq, e as i32),
+	}?;
+
+	Ok(())
     }
 }

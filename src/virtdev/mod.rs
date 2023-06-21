@@ -5,7 +5,7 @@ use std::time::Duration;
 mod registry;
 mod registry_element;
 
-mod device;
+pub mod device;
 mod device_open;
 
 pub use registry::DeviceRegistry;

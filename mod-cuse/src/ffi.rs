@@ -92,6 +92,12 @@ declare_flags!(release_flags, u32, {
     FLOCK_UNLOCK = 1,
 });
 
+declare_flags!(write_flags, u32, {
+    CACHE = 0,
+    LOCKOWNER = 1,
+    KILL_SUIDGID = 2,
+});
+
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct fuse_opcode(u32);
@@ -138,7 +144,7 @@ pub struct fuse_write_in {
     pub fh:		u64,
     pub offset:		u64,
     pub size:		u32,
-    pub write_flags:	u32,
+    pub write_flags:	write_flags,
     pub lock_owner:	u64,
     pub flags:		u32,
     pub _padding:	u32,

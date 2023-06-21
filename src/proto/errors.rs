@@ -5,6 +5,9 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
+    #[error(transparent)]
+    FromIntError(#[from] std::num::TryFromIntError),
+
     #[error("payload too large {0}")]
     PayloadTooLarge(usize),
 

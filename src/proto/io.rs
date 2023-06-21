@@ -109,9 +109,10 @@ fn recv_exact_timeout_internal(fd: RawFd, buf: &mut [MaybeUninit<u8>],
     Ok(buf)
 }
 
-pub fn recv_exact_timeout<R, B>(fd: R, buf: &mut MaybeUninit<B>,
-				to_initial: Option<Duration>, to_cont: Option<Duration>)
-				-> std::io::Result<&B>
+pub fn recv_exact_timeout<'a, R, B>(fd: R, buf: &'a mut MaybeUninit<B>,
+				    len_avail: &mut Option<usize>,
+				    to_initial: Option<Duration>, to_cont: Option<Duration>)
+				    -> std::io::Result<&'a B>
 where
     R: AsFd,
     B: super::AsReprBytesMut,
@@ -119,23 +120,37 @@ where
     let fd = fd.as_fd().as_raw_fd();
 
     let buf_bytes = (buf as &mut dyn super::AsReprBytesMut).as_repr_bytes_mut();
-    let buf_bytes = unsafe {
+    let buf_bytes: &mut [MaybeUninit<u8>] = unsafe {
 	core::mem::transmute(buf_bytes)
+    };
+    let buf_len = buf_bytes.len();
+
+    let new_avail = match len_avail {
+	Some(l)	if *l < buf_len	=> {
+	    warn!("not enough space for rx; {l} < {}", buf_bytes.len());
+	    panic!();
+	    return Err(nix::Error::EPROTO.into())
+	}
+
+	Some(l)			=> Some(*l - buf_len),
+	None			=> None,
     };
 
     let res = recv_exact_timeout_internal(fd, buf_bytes, to_initial, to_cont)?;
+
+    *len_avail = new_avail;
 
     (buf as &mut dyn super::AsReprBytesMut).update_repr(res);
 
     Ok(unsafe { buf.assume_init_ref() })
 }
 
-pub fn recv_to<R, B>(fd: R, mut buf: MaybeUninit<B>) -> std::io::Result<B>
+pub fn recv_to<R, B>(fd: R, mut buf: MaybeUninit<B>, len_avail: &mut Option<usize>) -> std::io::Result<B>
 where
     R: AsFd,
     B: AsReprBytesMut + Sized,
 {
-    recv_exact_timeout(fd, &mut buf, Some(TIMEOUT_READ), Some(TIMEOUT_READ))?;
+    recv_exact_timeout(fd, &mut buf, len_avail, Some(TIMEOUT_READ), Some(TIMEOUT_READ))?;
 
     Ok(unsafe { buf.assume_init() })
 }

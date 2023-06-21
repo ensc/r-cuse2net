@@ -36,5 +36,51 @@ pub unsafe trait AsReprBytesMut: AsReprBytes {
     }
 }
 
-unsafe impl <T: AsReprBytes> AsReprBytes for MaybeUninit<T> {}
-unsafe impl <T: AsReprBytesMut> AsReprBytesMut for MaybeUninit<T> {}
+// MaybeUninit<T>
+
+unsafe impl <T: AsReprBytes> AsReprBytes for MaybeUninit<T> {
+    fn as_repr_bytes(&self) -> &[u8] {
+	let tmp: &T = unsafe { core::mem::transmute(self) };
+
+	tmp.as_repr_bytes()
+    }
+}
+
+unsafe impl <T: AsReprBytesMut> AsReprBytesMut for MaybeUninit<T> {
+    fn as_repr_bytes_mut(&mut self) -> &mut [u8] {
+	let tmp: &mut T = unsafe { core::mem::transmute(self) };
+
+	tmp.as_repr_bytes_mut()
+    }
+
+    fn update_repr(&mut self, buf: &[u8]) {
+	let tmp: &mut T = unsafe { core::mem::transmute(self) };
+
+	tmp.update_repr(buf)
+    }
+}
+
+// &[u8]
+
+unsafe impl AsReprBytes for &[u8] {
+    fn as_repr_bytes(&self) -> &[u8] {
+	self
+    }
+}
+
+unsafe impl AsReprBytes for &mut [u8] {
+    fn as_repr_bytes(&self) -> &[u8] {
+	self
+    }
+}
+
+unsafe impl AsReprBytesMut for &mut [u8] {
+    fn as_repr_bytes_mut(&mut self) -> &mut [u8] {
+	self
+    }
+
+    fn update_repr(&mut self, buf: &[u8]) {
+	debug_assert_eq!(self.as_ptr(), buf.as_ptr());
+	debug_assert_eq!(self.len(), buf.len());
+    }
+}

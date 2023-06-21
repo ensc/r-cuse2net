@@ -1,20 +1,29 @@
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
 use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc};
 use std::thread::JoinHandle;
 
-use ensc_cuse_ffi::{OpInInfo, CuseDevice};
+use ensc_cuse_ffi::ffi as cuse_ffi;
+use ensc_cuse_ffi::{OpInInfo};
 use parking_lot::{Condvar, RwLock, Mutex};
 
 use crate::proto::Sequence;
-use crate::{Error, proto};
+use crate::{CuseFileDevice, Error, proto};
 
 use super::CONNECT_TIMEOUT;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
+pub struct WriteInfo {
+    pub offset:		u64,
+    pub write_flags:	cuse_ffi::write_flags,
+    pub flags:		u32,
+    pub data:		Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
 enum Request {
     Release,
+    Write(Box<WriteInfo>),
 }
 
 #[derive(Default)]
@@ -26,7 +35,7 @@ struct State {
 }
 
 struct DeviceInner {
-    cuse:		Arc<CuseDevice<File>>,
+    cuse:		Arc<CuseFileDevice>,
     rx_hdl:		Option<JoinHandle<()>>,
     tx_hdl:		Option<JoinHandle<()>>,
     fuse_hdl:		u64,
@@ -52,6 +61,8 @@ impl DeviceInner {
 
     #[instrument(level="trace", skip(self), ret)]
     fn handle_response(&self, seq: Sequence, resp: proto::Response) -> crate::Result<()> {
+	use ensc_cuse_ffi::AsBytes;
+
 	debug!("got response for seq {seq:?}");
 
 	match self.remove_request(seq) {
@@ -59,6 +70,23 @@ impl DeviceInner {
 	    Some((Request::Release, info))	=> {
 		self.state.write().closed = true;
 		info.send_error(&self.cuse, 0)?;
+	    }
+
+	    Some((Request::Write(_), info))	=> {
+		let sz = match resp {
+		    proto::Response::Write(sz) => sz,
+		    r				=> {
+			warn!("unexpected response {r:?}");
+			return Err(proto::Error::BadResponse.into());
+		    }
+		};
+
+		let write_resp = cuse_ffi::fuse_write_out {
+		    size:	sz,
+		    _padding:	0
+		};
+
+		info.send_response(&self.cuse, &[ write_resp.as_bytes() ])?;
 	    }
 	}
 
@@ -100,11 +128,14 @@ impl DeviceInner {
 
 	trace!("got state");
 
-	let seq = match req {
+	let seq = match &req {
 	    Request::Release	=> {
 		state.closing = true;
 		proto::Request::send_release(&self.conn)
-	    }
+	    },
+
+	    Request::Write(wrinfo)	=>
+		proto::Request::send_write(&self.conn, wrinfo.offset, &wrinfo.data)
 	};
 
 	trace!("seq = {seq:?}");
@@ -132,7 +163,7 @@ impl DeviceInner {
 		match self.handle_cuse(req, info) {
 		    Ok(_)		=> {},
 		    Err((info, e))	=> {
-			warn!("failed to handle request {req:?}: {e:?}");
+			warn!("failed to handle request: {e:?}");
 			let _ = info.send_error(&self.cuse, nix::libc::EIO);
 		    }
 		}
@@ -157,7 +188,7 @@ pub struct Device(Arc<DeviceInner>);
 #[derive(Debug)]
 pub(super) struct OpenArgs {
     pub addr:		SocketAddr,
-    pub cuse:		Arc<CuseDevice<File>>,
+    pub cuse:		Arc<CuseFileDevice>,
     pub fuse_hdl:	u64,
     pub flags:		u32,
 }
@@ -250,13 +281,17 @@ impl Device {
 	Ok(Self(dev.clone()))
     }
 
-    pub fn release(self, info: OpInInfo) -> Result<(), Error>
+    pub fn release(self, info: OpInInfo)
     {
 	info!("closing device");
 
 	self.0.state.write().pending.push_back((Request::Release, info));
 	self.0.state_change.notify_all();
+    }
 
-	Ok(())
+    pub fn write(&self, info: OpInInfo, write_info: WriteInfo)
+    {
+	self.0.state.write().pending.push_back((Request::Write(Box::new(write_info)), info));
+	self.0.state_change.notify_all();
     }
 }
