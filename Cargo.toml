@@ -15,12 +15,14 @@ path = "src/ser2net-dev.rs"
 
 [workspace]
 members = [
-	"mod-cuse"
+	"mod-cuse",
+	"mod-ioctl",
 ]
 
 [dependencies]
 thiserror = "*"
 ensc-cuse-ffi = { version = "*", path = "mod-cuse" }
+ensc-ioctl-ffi = { version = "*", path = "mod-ioctl" }
 tracing = { version = "*", features = ["max_level_trace", "release_max_level_info"] }
 tracing-subscriber = { version = "*", features = ["json", "env-filter"] }
 nix = "*"

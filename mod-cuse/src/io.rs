@@ -78,7 +78,18 @@ impl <'a> ReadBufIter<'a>
 	Ok(Some(&data[0]))
     }
 
+    pub fn next_all(&mut self) -> &'a [u8] {
+	let res = self.buf;
+	self.buf = &[];
+
+	res
+    }
+
     pub fn next_slice<T: Sized>(&mut self, cnt: usize) -> std::result::Result<Option<&'a [T]>, Error> {
+	if cnt == 0 {
+	    return Ok(Some(&[]));
+	}
+
 	if self.buf.is_empty() {
 	    return Ok(None);
 	}

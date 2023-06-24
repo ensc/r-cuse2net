@@ -154,7 +154,7 @@ impl DeviceRegistry {
 
 			drop(mngd_hdl);
 
-			let _ = op_info.send_error(&cuse, -nix::libc::EIO);
+			let _ = op_info.send_error(&cuse, nix::libc::EIO as u32);
 
 			Err(e)
 		    }

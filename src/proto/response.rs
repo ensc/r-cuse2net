@@ -1,8 +1,10 @@
 use std::io::IoSlice;
+use std::mem::MaybeUninit;
 use std::os::fd::AsFd;
 use std::time::Duration;
 
 use super::io::{recv_to, recv_exact_timeout, send_all, send_vectored_all};
+use super::ioctl::TermIOs;
 use super::{Sequence, Result, AsReprBytes, AsReprBytesMut, TIMEOUT_READ, Error};
 use super::endian::*;
 
@@ -11,6 +13,8 @@ use super::endian::*;
 pub enum ResponseCode {
     Result = 1,
     Write = 2,
+    IoctlData = 3,
+    IoctlTermios = 4,
 }
 
 impl ResponseCode {
@@ -22,6 +26,8 @@ impl ResponseCode {
 	Some(match v {
 	    1	=> Self::Result,
 	    2	=> Self::Write,
+	    3	=> Self::IoctlData,
+	    4	=> Self::IoctlTermios,
 	    _	=> return None,
 	})
     }
@@ -31,10 +37,28 @@ impl ResponseCode {
 pub enum Response {
     Ok,
     Write(u32),
+    IoctlData(u64, Vec<u8>),
+    IoctlTermios(TermIOs),
 }
 
 impl Response {
     const MAX_SZ: usize = 0x1_0000;
+
+    #[instrument(level="trace", skip(w))]
+    pub fn send_ioctl_termios<W: AsFd + std::io::Write>(w: W, seq: Sequence, ios: TermIOs) -> Result<()> {
+	let hdr = Header {
+	    op:		ResponseCode::IoctlTermios.as_u8().into(),
+	    err:	0.into(),
+	    len:	(core::mem::size_of_val(&ios) as u32).into(),
+	    seq:	seq.0.into(),
+	    ..Default::default()
+	};
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(ios.as_repr_bytes()) ])?;
+
+	Ok(())
+    }
 
     #[instrument(level="trace", skip(w))]
     pub fn send_write<W: AsFd + std::io::Write>(w: W, seq: Sequence, size: u32) -> Result<()> {
@@ -109,15 +133,41 @@ impl Response {
 	    ResponseCode::Result if hdr.len() == 0	=>
 		Self::Ok,
 
-	    ResponseCode::Write				=> {
-		let sz: u64 = recv_to(&r, be64::uninit(), &mut rx_len)?.into();
-		Self::Write(sz.try_into()?)
-	    }
+	    ResponseCode::Write				=>
+		Self::Write(recv_to(&r, be32::uninit(), &mut rx_len)?.into()),
+
+	    ResponseCode::IoctlData			=> {
+		let rc = recv_to(&r, be64::uninit(), &mut rx_len)?.into();
+		let data = match *rx_len.as_ref().unwrap() {
+		    0	=> Vec::new(),
+		    len	=> {
+			let mut data = Vec::with_capacity(len);
+			let buf: &mut [u8] = unsafe {
+			    std::slice::from_raw_parts_mut(data.as_mut_ptr(), len)
+			};
+			let buf = MaybeUninit::new(buf);
+
+			recv_to(&r, buf, &mut rx_len)?;
+
+			unsafe {
+			    data.set_len(len);
+			}
+
+			data
+		    }
+		};
+
+
+		Self::IoctlData(rc, data)
+	    },
+
+	    ResponseCode::IoctlTermios			=> todo!(),
 
 	    ResponseCode::Result			=> {
 		warn!("bad response {hdr:?}");
 		return Err(Error::BadResponse);
-	    }
+	    },
+
 	}))
     }
 

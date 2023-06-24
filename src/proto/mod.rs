@@ -5,6 +5,7 @@ mod asrepr;
 mod rawbuffer;
 mod request;
 mod response;
+pub mod ioctl;
 
 use std::{time::Duration, os::fd::AsFd};
 

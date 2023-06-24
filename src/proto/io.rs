@@ -128,7 +128,6 @@ where
     let new_avail = match len_avail {
 	Some(l)	if *l < buf_len	=> {
 	    warn!("not enough space for rx; {l} < {}", buf_bytes.len());
-	    panic!();
 	    return Err(nix::Error::EPROTO.into())
 	}
 

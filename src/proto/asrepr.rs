@@ -30,6 +30,20 @@ pub unsafe trait AsReprBytesMut: AsReprBytes {
 	}
     }
 
+    /// Updates underlaying object
+    ///
+    /// ```should_panic
+    /// # use core::mem::MaybeUninit;
+    /// # use r_ser2net::proto::{ AsReprBytes, AsReprBytesMut };
+    /// #[repr(transparent)]
+    /// struct U32Proto(u32);
+    /// unsafe impl AsReprBytes for U32Proto {};
+    /// unsafe impl AsReprBytesMut for U32Proto {};
+    ///
+    /// let mut dat = U32Proto(0);
+    ///
+    /// dat.update_repr(&0x12345678_u32.to_ne_bytes());
+    /// ```
     fn update_repr(&mut self, buf: &[u8]) {
 	debug_assert_eq!(self as * const _ as * const u8, buf.as_ptr());
 	debug_assert_eq!(core::mem::size_of_val(self), buf.len());
@@ -38,7 +52,7 @@ pub unsafe trait AsReprBytesMut: AsReprBytes {
 
 // MaybeUninit<T>
 
-unsafe impl <T: AsReprBytes> AsReprBytes for MaybeUninit<T> {
+unsafe impl <T: AsReprBytes + Sized> AsReprBytes for MaybeUninit<T> {
     fn as_repr_bytes(&self) -> &[u8] {
 	let tmp: &T = unsafe { core::mem::transmute(self) };
 
@@ -46,13 +60,33 @@ unsafe impl <T: AsReprBytes> AsReprBytes for MaybeUninit<T> {
     }
 }
 
-unsafe impl <T: AsReprBytesMut> AsReprBytesMut for MaybeUninit<T> {
+unsafe impl <T: AsReprBytesMut + Sized> AsReprBytesMut for MaybeUninit<T> {
     fn as_repr_bytes_mut(&mut self) -> &mut [u8] {
 	let tmp: &mut T = unsafe { core::mem::transmute(self) };
 
 	tmp.as_repr_bytes_mut()
     }
 
+    /// Updates underlaying object
+    ///
+    /// Usually, given slice must be exactly the underlying byte representation
+    /// of the object.  For some objects, it might change content to a subslice
+    /// of the contained data.
+    ///
+    /// E.g. it is forbidden to write
+    ///
+    /// ```should_panic
+    /// # use core::mem::MaybeUninit;
+    /// # use r_ser2net::proto::{ AsReprBytes, AsReprBytesMut };
+    /// #[repr(transparent)]
+    /// struct U32Proto(u32);
+    /// unsafe impl AsReprBytes for U32Proto {};
+    /// unsafe impl AsReprBytesMut for U32Proto {};
+    ///
+    /// let mut dat = U32Proto::uninit();
+    ///
+    /// dat.update_repr(&0x12345678_u32.to_ne_bytes());
+    /// ```
     fn update_repr(&mut self, buf: &[u8]) {
 	let tmp: &mut T = unsafe { core::mem::transmute(self) };
 
@@ -82,5 +116,22 @@ unsafe impl AsReprBytesMut for &mut [u8] {
     fn update_repr(&mut self, buf: &[u8]) {
 	debug_assert_eq!(self.as_ptr(), buf.as_ptr());
 	debug_assert_eq!(self.len(), buf.len());
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_00() {
+	let mut data: &mut [u8] = &mut [0_u8; 9];
+
+	assert_eq!(data.as_repr_bytes(), &[0, 0, 0, 0,  0, 0, 0, 0,  0]);
+	assert_eq!(data.as_repr_bytes_mut(), &mut [0, 0, 0, 0,  0, 0, 0, 0,  0]);
+
+	data.as_repr_bytes_mut()[1] = 23;
+
+	assert_eq!(data.as_repr_bytes(), &[0, 23, 0, 0,  0, 0, 0, 0,  0]);
     }
 }

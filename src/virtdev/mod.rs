@@ -8,6 +8,8 @@ mod registry_element;
 pub mod device;
 mod device_open;
 
+pub mod ioctl;
+
 pub use registry::DeviceRegistry;
 use registry_element::DeviceState;
 use device::Device;

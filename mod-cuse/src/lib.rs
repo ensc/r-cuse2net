@@ -53,11 +53,11 @@ impl <F: AsFd> CuseDevice<F> {
 	Ok(())
     }
 
-    pub fn send_error(&self, unique: u64, rc: nix::libc::c_int) -> Result<(), Error>
+    pub fn send_error(&self, unique: u64, rc: u32) -> Result<(), Error>
     {
 	let hdr = ffi::fuse_out_header {
 	    len:	core::mem::size_of::<ffi::fuse_out_header>() as u32,
-	    error:	rc,
+	    error:	-(rc as i32),
 	    unique:	unique
 	};
 
@@ -103,6 +103,8 @@ pub trait AsBytes {
 impl AsBytes for ffi::fuse_out_header {}
 impl AsBytes for ffi::fuse_open_out {}
 impl AsBytes for ffi::fuse_write_out {}
+impl AsBytes for ffi::fuse_ioctl_out {}
+impl AsBytes for ffi::fuse_ioctl_iovec {}
 impl AsBytes for ffi::cuse_init_out {}
 
 #[derive(Debug, Clone)]
@@ -132,7 +134,7 @@ pub struct OpInInfo {
 }
 
 impl OpInInfo {
-    pub fn send_error<W: AsFd>(&self, w: &CuseDevice<W>, rc: nix::libc::c_int) -> Result<(), Error>
+    pub fn send_error<W: AsFd>(&self, w: &CuseDevice<W>, rc: u32) -> Result<(), Error>
     {
 	w.send_error(self.unique, rc)
     }
@@ -157,6 +159,16 @@ impl From<&ffi::fuse_in_header> for OpInInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct IoctlParams {
+    pub fh:		u64,
+    pub flags:		ffi::ioctl_flags,
+    pub cmd:		u32,
+    pub arg:		u64,
+    pub in_size:	u32,
+    pub out_size:	u32,
+}
+
+#[derive(Debug, Clone)]
 pub enum OpIn<'a> {
     Unknown,
     CuseInit{ version: KernelVersion, flags: ffi::cuse_flags },
@@ -164,6 +176,7 @@ pub enum OpIn<'a> {
     FuseRelease { fh: u64, flags: u32, release_flags: ffi::release_flags, lock_owner: u64 },
     FuseWrite{ fh: u64, offset: u64, write_flags: ffi::write_flags,
 	       lock_owner: u64, flags: u32, data: &'a[u8] },
+    FuseIoctl(IoctlParams, &'a [u8]),
     FuseInterrupt { unique: u64 },
 }
 
@@ -228,11 +241,26 @@ impl <'a> OpIn<'a> {
 		}
 	    }
 
+	    ffi::fuse_opcode::FUSE_IOCTL => {
+		let opdata: &ffi::fuse_ioctl_in = iter.next()?.ok_or(Error::Eof)?;
+		debug!("FUSE_IOCTL: {opdata:?}");
+		let indata: &[u8] = iter.next_slice(opdata.in_size as usize)?.ok_or(Error::Eof)?;
+
+		Self::FuseIoctl(IoctlParams {
+		    fh:			opdata.fh,
+		    flags:		opdata.flags,
+		    cmd:		opdata.cmd,
+		    arg:		opdata.arg,
+		    in_size:		opdata.in_size,
+		    out_size:		opdata.out_size,
+		}, indata)
+	    }
+
 	    _		=> Self::Unknown,
 	};
 
 	if !iter.is_empty() {
-	    warn!("excess elements in op-in data for {res:?}");
+	    warn!("excess elements in op-in data for {res:?} ({hdr:?})");
 	}
 
 	Ok((hdr.into(), res))

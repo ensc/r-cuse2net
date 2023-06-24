@@ -12,7 +12,7 @@ macro_rules! declare_flags {
 	pub struct $id($type);
 
 	impl $id {
-	    $( const $flag: Self = Self(1 << $bit); )*
+	    $( pub const $flag: Self = Self(1 << $bit); )*
 
 	    pub const fn empty() -> Self {
 		Self(0)
@@ -28,23 +28,45 @@ macro_rules! declare_flags {
 		    _		=> None,
 		}
 	    }
+
+	    pub const fn is_empty(self) -> bool {
+		self.0 == 0
+	    }
+
+	    pub const fn contains(self, other: Self) -> bool {
+		self.0 & other.0 != 0
+	    }
+	}
+
+	impl std::ops::BitAnd for $id {
+	    type Output = Self;
+
+	    fn bitand(self, rhs: Self) -> Self::Output {
+		Self(self.0.bitand(rhs.0))
+	    }
+	}
+
+	impl std::ops::BitOr for $id {
+	    type Output = Self;
+
+	    fn bitor(self, rhs: Self) -> Self::Output {
+		Self(self.0.bitor(rhs.0))
+	    }
 	}
 
 	impl std::fmt::Debug for $id {
 	    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		use std::borrow::Cow;
 
-		let mut v = self.0;
+		let unknown = self.0 & !Self::all().0;
+
+		let mut v = self.0 & !unknown;
 		let mut bit = 0;
 		let mut res = Vec::new();
-		let mut unknown = 0;
 
 		while v != 0 {
 		    if v & 1 != 0 {
-			match Self::bit_to_name(bit) {
-			    Some(s)	=> res.push(Cow::Borrowed(s)),
-			    None	=> unknown |= 1 << bit,
-			}
+			res.push(Cow::Borrowed(Self::bit_to_name(bit).unwrap()));
 		    }
 
 		    v >>= 1;
@@ -62,11 +84,12 @@ macro_rules! declare_flags {
 		    }
 		}
 
-		f.debug_tuple("cuse_flags")
+		f.debug_tuple(stringify!($id))
 		    .field(&RawString(res.join(&"-")))
 		    .finish()
 	    }
 	}
+
     }
 }
 
@@ -96,6 +119,15 @@ declare_flags!(write_flags, u32, {
     CACHE = 0,
     LOCKOWNER = 1,
     KILL_SUIDGID = 2,
+});
+
+declare_flags!(ioctl_flags, u32, {
+    COMPAT = 0,
+    UNRESTRICTED = 1,
+    RETRY = 2,
+    X32BIT = 3,
+    DIR = 4,
+    COMPAT_X32 = 5,
 });
 
 #[repr(transparent)]
@@ -161,6 +193,33 @@ pub struct fuse_write_out {
 #[derive(Debug)]
 pub struct fuse_interrupt_in {
     pub unique:		u64,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_ioctl_in {
+    pub fh:		u64,
+    pub flags:		ioctl_flags,
+    pub cmd:		u32,
+    pub arg:		u64,
+    pub in_size:	u32,
+    pub out_size:	u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_ioctl_iovec {
+    pub base:		u64,
+    pub len:		u64,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_ioctl_out {
+    pub result:		i32,
+    pub flags:		ioctl_flags,
+    pub in_iovs:	u32,
+    pub out_iovs:	u32,
 }
 
 #[repr(C)]

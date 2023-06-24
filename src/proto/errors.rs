@@ -23,6 +23,13 @@ pub enum Error {
     #[error("bad sequence")]
     BadSequence,
 
+    #[error("bad length")]
+    BadLength,
+
+
+    #[error("bad ioctl param")]
+    BadIoctlParam,
+
     #[error("remote error {1} on sequence {0:?}")]
     RemoteError(Option<Sequence>, i32),
 }

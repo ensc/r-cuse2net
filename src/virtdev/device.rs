@@ -1,13 +1,21 @@
+#![allow(unused_variables)]
+
+
 use std::collections::{HashMap, VecDeque};
 use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc};
 use std::thread::JoinHandle;
 
-use ensc_cuse_ffi::ffi as cuse_ffi;
-use ensc_cuse_ffi::{OpInInfo};
 use parking_lot::{Condvar, RwLock, Mutex};
 
+use ensc_cuse_ffi::ffi as cuse_ffi;
+use ensc_cuse_ffi::{IoctlParams, OpInInfo};
+
+use ensc_ioctl_ffi::ffi as ioctl_ffi;
+use ioctl_ffi::ioctl;
+
 use crate::proto::Sequence;
+use crate::proto::ioctl::TermIOs;
 use crate::{CuseFileDevice, Error, proto};
 
 use super::CONNECT_TIMEOUT;
@@ -23,7 +31,19 @@ pub struct WriteInfo {
 #[derive(Clone, Debug)]
 enum Request {
     Release,
+    Write,
+    IoctlGeneric,
+    IoctlTermiosGet(ioctl),
+}
+
+#[derive(Clone, Debug)]
+enum Pending {
+    Release,
     Write(Box<WriteInfo>),
+    IoctlGeneric{ cmd: ioctl, arg: u64 },
+    IoctlGenericRW{ cmd: ioctl, data: Option<Vec<u8>> },
+    IoctlTermiosGet{ cmd: ioctl },
+    IoctlTermiosSet{ cmd: ioctl, ios: crate::proto::ioctl::TermIOs },
 }
 
 #[derive(Default)]
@@ -31,7 +51,7 @@ struct State {
     closing:		bool,
     closed:		bool,
     requests:		HashMap<Sequence, (Request, OpInInfo)>,
-    pending:		VecDeque<(Request, OpInInfo)>,
+    pending:		VecDeque<(Pending, OpInInfo)>,
 }
 
 struct DeviceInner {
@@ -65,14 +85,22 @@ impl DeviceInner {
 
 	debug!("got response for seq {seq:?}");
 
-	match self.remove_request(seq) {
-	    None				=> warn!("no such request {seq:?}"),
-	    Some((Request::Release, info))	=> {
+	let (req, info) = match self.remove_request(seq) {
+	    None	=> {
+		warn!("no such request {seq:?}");
+		return Ok(());
+	    }
+
+	    Some(req)	=> req
+	};
+
+	match req {
+	    Request::Release	=> {
 		self.state.write().closed = true;
 		info.send_error(&self.cuse, 0)?;
 	    }
 
-	    Some((Request::Write(_), info))	=> {
+	    Request::Write	=> {
 		let sz = match resp {
 		    proto::Response::Write(sz) => sz,
 		    r				=> {
@@ -88,6 +116,17 @@ impl DeviceInner {
 
 		info.send_response(&self.cuse, &[ write_resp.as_bytes() ])?;
 	    }
+
+	    Request::IoctlTermiosGet(_cmd)	=> {
+		//let termios = resp.
+		//		match cmd {
+		//		    ioctl::TCGETS	=>
+
+		    todo!();
+	    }
+
+	    Request::IoctlGeneric	=> todo!(),
+
 	}
 
 	Ok(())
@@ -121,35 +160,46 @@ impl DeviceInner {
     }
 
     #[instrument(level="trace", skip(self), ret)]
-    fn handle_cuse(&self, req: Request, info: OpInInfo) -> Result<(), (OpInInfo, Error)> {
+    fn handle_cuse(&self, req: Pending, info: OpInInfo) -> Result<(), (OpInInfo, Error)> {
 	debug!("tx thread: handle {req:?}");
 
 	let mut state = self.state.write();
 
 	trace!("got state");
 
-	let seq = match &req {
-	    Request::Release	=> {
+	let res = match &req {
+	    Pending::Release	=> {
 		state.closing = true;
 		proto::Request::send_release(&self.conn)
+		    .map(|seq| (seq, Request::Release))
 	    },
 
-	    Request::Write(wrinfo)	=>
+	    Pending::Write(wrinfo)	=>
 		proto::Request::send_write(&self.conn, wrinfo.offset, &wrinfo.data)
+		.map(|seq| (seq, Request::Write)),
+
+
+	    Pending::IoctlTermiosGet { cmd }	=>
+		proto::Request::send_termios_get(&self.conn)
+		.map(|seq| (seq, Request::IoctlTermiosGet(*cmd))),
+
+	    Pending::IoctlGeneric { cmd, arg }	=> todo!(),
+	    Pending::IoctlGenericRW { cmd, data }	=> todo!(),
+	    Pending::IoctlTermiosSet { cmd, ios }	=> todo!(),
+
+
 	};
 
-	trace!("seq = {seq:?}");
-
-	match seq {
-	    Err(e)	=> Err((info, e.into())),
-	    Ok(seq)	=> {
-		state.requests.insert(seq, (req, info));
+	match res {
+	    Err(e)		=> Err((info, e.into())),
+	    Ok((seq, pending))	=> {
+		state.requests.insert(seq, (pending, info));
 		Ok(())
 	    }
 	}
     }
 
-    fn next_pending(&self) -> Option<(Request, OpInInfo)> {
+    fn next_pending(&self) -> Option<(Pending, OpInInfo)> {
 	self.state.write().pending.pop_front()
     }
 
@@ -164,7 +214,7 @@ impl DeviceInner {
 		    Ok(_)		=> {},
 		    Err((info, e))	=> {
 			warn!("failed to handle request: {e:?}");
-			let _ = info.send_error(&self.cuse, nix::libc::EIO);
+			let _ = info.send_error(&self.cuse, nix::libc::EIO as u32);
 		    }
 		}
 	    }
@@ -285,13 +335,104 @@ impl Device {
     {
 	info!("closing device");
 
-	self.0.state.write().pending.push_back((Request::Release, info));
+	self.0.state.write().pending.push_back((Pending::Release, info));
 	self.0.state_change.notify_all();
     }
 
     pub fn write(&self, info: OpInInfo, write_info: WriteInfo)
     {
-	self.0.state.write().pending.push_back((Request::Write(Box::new(write_info)), info));
+	self.0.state.write().pending.push_back((Pending::Write(Box::new(write_info)), info));
+	self.0.state_change.notify_all();
+    }
+
+    pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])
+    {
+	let cmd: ioctl = params.cmd.into();
+
+	let req = match cmd {
+	    ioctl::TIOCSLCKTRMIOS |
+	    ioctl::TCSETSW |
+	    ioctl::TCSETSF |
+	    ioctl::TCSETS		=> Pending::IoctlTermiosSet {
+		cmd:	cmd,
+		ios:	TermIOs::try_from_os(data).unwrap(),
+	    },
+
+	    ioctl::TCSETSW2 |
+	    ioctl::TCSETSF2 |
+	    ioctl::TCSETS2		=> Pending::IoctlTermiosSet {
+		cmd:	cmd,
+		ios:	TermIOs::try_from_os2(data).unwrap(),
+	    },
+
+	    ioctl::TCGETS |
+	    ioctl::TCGETS2		=> Pending::IoctlTermiosGet {
+		cmd:	cmd,
+	    },
+
+	    ioctl::TIOCSSOFTCAR |
+	    ioctl::TIOCMSET |
+	    ioctl::TIOCMBIC |
+	    ioctl::TIOCMBIS |
+	    ioctl::TIOCSWINSZ		=> Pending::IoctlGenericRW {
+		cmd:	cmd,
+		data:	Some(data.to_owned()),
+	    },
+
+	    ioctl::TIOCMGET |
+	    ioctl::TIOCGETD |
+	    ioctl::TIOCMIWAIT |
+	    ioctl::TIOCGWINSZ |
+	    ioctl::FIONREAD |
+	    ioctl::TIOCINQ |
+	    ioctl::TIOCOUTQ |
+	    ioctl::TIOCGSOFTCAR		=> Pending::IoctlGenericRW {
+		cmd:	cmd,
+		data:	None,
+	    },
+
+	    // TODO: handle internally
+	    ioctl::TIOCGPGRP |
+	    ioctl::TIOCSPGRP |
+	    ioctl::TIOCGSID |
+	    ioctl::TIOCGEXCL |
+	    ioctl::TIOCNXCL |
+	    ioctl::TIOCEXCL		=> {
+		todo!()
+	    }
+
+	    ioctl::TCSBRK |
+	    ioctl::TCSBRKP |
+	    ioctl::TIOCSBRK |
+	    ioctl::TIOCCBRK |
+	    ioctl::TCXONC |
+	    ioctl::TCFLSH |
+	    ioctl::TIOCCONS |
+	    ioctl::TIOCSCTTY |
+	    ioctl::TIOCNOTTY		 => Pending::IoctlGeneric {
+		cmd:	cmd,
+		arg:	params.arg,
+		},
+
+
+
+	    c if !c.is_io()		=> Pending::IoctlGeneric {
+		cmd:	cmd,
+		arg:	params.arg,
+	    },
+
+	    c if c.is_write()		=> Pending::IoctlGenericRW {
+		cmd:	cmd,
+		data:	Some(data.to_owned()),
+	    },
+
+	    _				=> Pending::IoctlGenericRW {
+		cmd:	cmd,
+		data:	None,
+	    }
+	};
+
+	self.0.state.write().pending.push_back((req, info));
 	self.0.state_change.notify_all();
     }
 }

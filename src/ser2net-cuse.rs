@@ -94,7 +94,7 @@ fn main() -> Result<()> {
 		let hdr = ensc_cuse_ffi::ffi::cuse_init_out {
 		    major:	KernelVersion::default().major,
 		    minor:	KernelVersion::default().minor,
-		    flags:	flags,
+		    flags:	flags, // ensc_cuse_ffi::ffi::cuse_flags::empty(),
 		    max_read:	msg.buf_size() as u32,
 		    max_write:	msg.buf_size() as u32 - 0x1000,
 		    dev_major:	*args.major.as_ref().unwrap_or(&0) as u32,
@@ -129,9 +129,15 @@ fn main() -> Result<()> {
 		devices.for_fh(fh, |dev| dev.write(info, write_info));
 	    }
 
+	    OpIn::FuseIoctl(args, data)	=> {
+		if virtdev::ioctl::decode_ioctl(f, info.unique, &args, data)? {
+		    devices.for_fh(args.fh, |dev| dev.ioctl(info, args, data));
+		}
+	    }
+
 	    op	=> {
 		warn!("unimplemented op {op:?}");
-		let _ = info.send_error(f, nix::libc::ENOSYS);
+		let _ = info.send_error(f, nix::libc::ENOSYS as u32);
 	    }
 	}
     }
