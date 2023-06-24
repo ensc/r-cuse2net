@@ -47,6 +47,24 @@ impl From<be32> for ioctl_ffi::c_lflag {
     }
 }
 
+pub enum TermIOsOs {
+    V1(ioctl_ffi::termios),
+    V2(ioctl_ffi::termios2),
+}
+
+unsafe impl AsReprBytes for TermIOsOs {
+    fn as_repr_bytes(&self) -> &[u8] {
+	let (ptr, len) = match self {
+	    Self::V1(ios)	=> (ios as * const _ as * const u8, core::mem::size_of_val(ios)),
+	    Self::V2(ios)	=> (ios as * const _ as * const u8, core::mem::size_of_val(ios)),
+	};
+
+	unsafe {
+	    core::slice::from_raw_parts(ptr, len)
+	}
+    }
+}
+
 impl TermIOs {
     pub fn try_from_os(raw: &[u8]) -> Result<Self> {
 	if raw.len() < core::mem::size_of::<ioctl_ffi::termios>() {
@@ -78,7 +96,7 @@ impl TermIOs {
 	Ok(res)
     }
 
-    pub fn try_from_os2(raw: &[u8]) -> Result<Self> {
+    pub fn try_from_raw_os2(raw: &[u8]) -> Result<Self> {
 	if raw.len() < core::mem::size_of::<ioctl_ffi::termios2>() {
 	    warn!("os termios2 param too short");
 	    return Err(Error::BadIoctlParam);
@@ -88,6 +106,10 @@ impl TermIOs {
 	    (raw as * const _ as * const ioctl_ffi::termios2).read_unaligned()
 	};
 
+	Ok(Self::from_os2(&params))
+    }
+
+    pub fn from_os2(params: &ioctl_ffi::termios2) -> Self {
 	let mut res = Self {
 	    iflag:	params.c_iflag.0.into(),
 	    oflag:	params.c_oflag.0.into(),
@@ -104,10 +126,10 @@ impl TermIOs {
 	    res.cc[idx] = (*v).into();
 	}
 
-	Ok(res)
+	res
     }
 
-    pub fn into_os(self) -> ioctl_ffi::termios {
+    pub fn into_os(self) -> TermIOsOs {
 	let mut res = ioctl_ffi::termios {
 	    c_iflag:	self.iflag.into(),
 	    c_oflag:	self.oflag.into(),
@@ -117,14 +139,14 @@ impl TermIOs {
 	    c_cc:	Default::default(),
 	};
 
-	for (idx, v) in self.cc.into_iter().enumerate() {
-	    res.c_cc[idx] = v.into();
+	for (idx, v) in res.c_cc.iter_mut().enumerate() {
+	    *v = self.cc[idx].into();
 	}
 
-	res
+	TermIOsOs::V1(res)
     }
 
-    pub fn into_os2(self) -> ioctl_ffi::termios2 {
+    pub fn into_os2(self) -> TermIOsOs {
 	let mut res = ioctl_ffi::termios2 {
 	    c_iflag:	self.iflag.into(),
 	    c_oflag:	self.oflag.into(),
@@ -136,10 +158,10 @@ impl TermIOs {
 	    c_cc:	Default::default(),
 	};
 
-	for (idx, v) in self.cc.into_iter().enumerate() {
-	    res.c_cc[idx] = v.into();
+	for (idx, v) in res.c_cc.iter_mut().enumerate() {
+	    *v = self.cc[idx].into();
 	}
 
-	res
+	TermIOsOs::V2(res)
     }
 }

@@ -8,7 +8,7 @@ pub const FUSE_MIN_READ_BUFFER: usize = 8192;
 macro_rules! declare_flags {
     ($id:ident, $type:ty, { $( $flag:ident = $bit:expr, )* })	=> {
 	#[repr(transparent)]
-	#[derive(Clone, Copy)]
+	#[derive(Clone, Copy, Default)]
 	pub struct $id($type);
 
 	impl $id {
@@ -85,7 +85,7 @@ macro_rules! declare_flags {
 		}
 
 		f.debug_tuple(stringify!($id))
-		    .field(&RawString(res.join(&"-")))
+		    .field(&RawString(res.join(&"|")))
 		    .finish()
 	    }
 	}

@@ -6,6 +6,8 @@ use std::os::fd::{OwnedFd, FromRawFd, AsRawFd};
 use std::path::Path;
 use std::net::TcpStream;
 
+use ensc_ioctl_ffi::ffi::termios2;
+
 use crate::proto::ioctl::TermIOs;
 use crate::proto::{self, Sequence};
 
@@ -107,7 +109,7 @@ impl Device {
     }
 
     fn ioctl_termios_get(&self, seq: Sequence) -> crate::Result<()> {
-	let mut ios: MaybeUninit<nix::libc::termios2> = MaybeUninit::uninit();
+	let mut ios: MaybeUninit<termios2> = MaybeUninit::uninit();
 	let rc = unsafe {
 	    nix::libc::ioctl(self.fd.as_raw_fd(), nix::libc::TCGETS2, ios.as_mut_ptr())
 	};
@@ -117,10 +119,10 @@ impl Device {
 	}
 
 	let ios = unsafe {
-	    ios.assume_init();
+	    ios.assume_init()
 	};
 
-	proto::Response::send_ioctl_termios(&self.conn, seq, TermIOs::try_from_os2(&ios))?;
+	proto::Response::send_ioctl_termios(&self.conn, seq, TermIOs::from_os2(&ios))?;
 
 	Ok(())
     }

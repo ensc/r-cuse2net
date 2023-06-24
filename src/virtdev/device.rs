@@ -8,13 +8,13 @@ use std::thread::JoinHandle;
 
 use parking_lot::{Condvar, RwLock, Mutex};
 
-use ensc_cuse_ffi::ffi as cuse_ffi;
+use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags};
 use ensc_cuse_ffi::{IoctlParams, OpInInfo};
 
 use ensc_ioctl_ffi::ffi as ioctl_ffi;
 use ioctl_ffi::ioctl;
 
-use crate::proto::Sequence;
+use crate::proto::{Sequence, AsReprBytes};
 use crate::proto::ioctl::TermIOs;
 use crate::{CuseFileDevice, Error, proto};
 
@@ -117,12 +117,35 @@ impl DeviceInner {
 		info.send_response(&self.cuse, &[ write_resp.as_bytes() ])?;
 	    }
 
-	    Request::IoctlTermiosGet(_cmd)	=> {
-		//let termios = resp.
-		//		match cmd {
-		//		    ioctl::TCGETS	=>
+	    Request::IoctlTermiosGet(cmd)	=> {
+		let ios = match resp {
+		    proto::Response::IoctlTermios(ios)	=> ios,
+		    r				=> {
+			warn!("unexpected response {r:?}");
+			return Err(proto::Error::BadResponse.into());
+		    }
+		};
 
-		    todo!();
+		let ios = match cmd {
+		    ioctl::TCGETS	=> ios.into_os(),
+		    ioctl::TCGETS2	=> ios.into_os2(),
+		    _			=>
+			panic!("internal error: mismatching cmd {cmd:?}"),
+		};
+
+		let ios = ios.as_repr_bytes();
+
+		let hdr = cuse_ffi::fuse_ioctl_out {
+		    result:		0,
+		    flags:		ioctl_flags::UNRESTRICTED,
+		    in_iovs:		0,
+		    out_iovs:		1,
+		};
+
+		debug!("hdr={hdr:?}, ios={ios:?}");
+
+		info.send_response(&self.cuse, &[ hdr.as_bytes(),
+						  ios ])?;
 	    }
 
 	    Request::IoctlGeneric	=> todo!(),
@@ -349,6 +372,7 @@ impl Device {
     {
 	let cmd: ioctl = params.cmd.into();
 
+	#[allow(unreachable_patterns)]
 	let req = match cmd {
 	    ioctl::TIOCSLCKTRMIOS |
 	    ioctl::TCSETSW |
@@ -362,7 +386,7 @@ impl Device {
 	    ioctl::TCSETSF2 |
 	    ioctl::TCSETS2		=> Pending::IoctlTermiosSet {
 		cmd:	cmd,
-		ios:	TermIOs::try_from_os2(data).unwrap(),
+		ios:	TermIOs::try_from_raw_os2(data).unwrap(),
 	    },
 
 	    ioctl::TCGETS |
@@ -383,8 +407,8 @@ impl Device {
 	    ioctl::TIOCGETD |
 	    ioctl::TIOCMIWAIT |
 	    ioctl::TIOCGWINSZ |
-	    ioctl::FIONREAD |
 	    ioctl::TIOCINQ |
+	    ioctl::FIONREAD |
 	    ioctl::TIOCOUTQ |
 	    ioctl::TIOCGSOFTCAR		=> Pending::IoctlGenericRW {
 		cmd:	cmd,

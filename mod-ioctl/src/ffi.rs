@@ -1,5 +1,8 @@
 #![allow(non_camel_case_types)]
 
+macro_rules! declare_ioctls {
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BitGeo {
     bits:	u8,

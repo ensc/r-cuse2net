@@ -161,7 +161,8 @@ impl Response {
 		Self::IoctlData(rc, data)
 	    },
 
-	    ResponseCode::IoctlTermios			=> todo!(),
+	    ResponseCode::IoctlTermios			=>
+		Self::IoctlTermios(recv_to(&r, TermIOs::uninit(), &mut rx_len)?.into()),
 
 	    ResponseCode::Result			=> {
 		warn!("bad response {hdr:?}");
