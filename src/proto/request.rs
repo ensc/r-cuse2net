@@ -3,7 +3,9 @@ use std::sync::atomic::AtomicU64;
 use std::io::IoSlice;
 use std::os::fd::AsFd;
 
-use super::ioctl::TermIOs;
+use ensc_ioctl_ffi::ffi::ioctl;
+
+use super::ioctl::Arg;
 use super::{Sequence, AsReprBytes, TIMEOUT_READ, Error, Result, AsReprBytesMut};
 use super::io::{send_vectored_all, recv_exact_timeout, recv_to};
 use super::endian::*;
@@ -17,8 +19,6 @@ pub enum RequestCode {
     Release = 2,
     Write = 3,
     Ioctl = 4,
-    IoctlTermiosGet = 5,
-    IoctlTermiosSet = 6,
 }
 
 impl RequestCode {
@@ -32,8 +32,6 @@ impl RequestCode {
 	    2	=> Self::Release,
 	    3	=> Self::Write,
 	    4	=> Self::Ioctl,
-	    5	=> Self::IoctlTermiosGet,
-	    6	=> Self::IoctlTermiosSet,
 	    _	=> return None,
 	})
     }
@@ -44,9 +42,15 @@ pub enum Request<'a> {
     Open(Open, Sequence),
     Release(Sequence),
     Write(Sequence, Write, &'a[u8]),
-    Ioctl(Sequence, Ioctl, &'a[u8]),
-    IoctlTermiosGet(Sequence),
-    IoctlTermiosSet(Sequence, u32, TermIOs),
+    Ioctl(Sequence, Ioctl, Arg),
+}
+
+fn sub_slice(buf: &mut [MaybeUninit<u8>], sz: usize) -> MaybeUninit<&mut [u8]> {
+    let buf = &mut buf[..sz];
+
+    unsafe {
+	core::mem::transmute(buf)
+    }
 }
 
 impl <'a> Request<'a> {
@@ -76,15 +80,18 @@ impl <'a> Request<'a> {
 	    RequestCode::Release	=> Self::Release(seq),
 	    RequestCode::Write		=> {
 		let wrinfo = recv_to(&r, Write::uninit(), &mut rx_len)?;
-		let rxbuf = &mut tmp_buf[0..*rx_len.as_ref().unwrap()];
-		let rxbuf: MaybeUninit<&mut [u8]> = unsafe {
-		    core::mem::transmute(rxbuf)
-		};
+		let rxbuf = sub_slice(tmp_buf, *rx_len.as_ref().unwrap());
+
 		Self::Write(seq, wrinfo, recv_to(&r, rxbuf, &mut rx_len)?)
 	    }
-	    RequestCode::Ioctl		=> { todo!() },
-	    RequestCode::IoctlTermiosGet	=> Self::IoctlTermiosGet(seq),
-	    RequestCode::IoctlTermiosSet	=> todo!(),
+	    RequestCode::Ioctl		=> {
+		let ioinfo = recv_to(&r, Ioctl::uninit(), &mut rx_len)?;
+		let rxbuf  = sub_slice(tmp_buf, *rx_len.as_ref().unwrap());
+		let arg = recv_to(&r, rxbuf, &mut rx_len)?;
+		let arg = Arg::from_raw(ioinfo.arg_type.into(), arg)?;
+
+		Self::Ioctl(seq, ioinfo, arg)
+	    }
 	};
 
 	match rx_len.unwrap() {
@@ -226,9 +233,9 @@ impl Request<'_> {
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct Ioctl {
-    pub cmd:	be32,
-    pub _pad:	be32,
-    pub arg:	be64,
+    pub cmd:		be32,
+    pub arg_type:	be8,
+    _pad:		[be8;3],
 }
 
 unsafe impl AsReprBytes for Ioctl {}
@@ -236,13 +243,13 @@ unsafe impl AsReprBytesMut for Ioctl {}
 
 impl Request<'_> {
     #[instrument(level="trace", skip(w), ret)]
-    pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, cmd: u32, flags: u32, arg: u64,
-						data: &[u8]) -> Result<Sequence> {
+    pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, cmd: ioctl, arg: Arg) -> Result<Sequence> {
 	let info = Ioctl {
-	    cmd:	cmd.into(),
-	    arg:	arg.into(),
-	    _pad:	0.into(),
+	    cmd:	cmd.as_numeric().into(),
+	    arg_type:	arg.code(),
+	    _pad:	Default::default(),
 	};
+	let data = arg.as_repr_bytes();
 
 	let hdr = Header::with_payload(RequestCode::Ioctl, &info, data);
 	let seq = hdr.seq()?;
@@ -254,43 +261,6 @@ impl Request<'_> {
 	Ok(seq)
     }
 }
-
-#[repr(C)]
-#[derive(Debug)]
-pub struct IoctlSetTermIOs {
-    pub cmd:	be32,
-    pub ios:	TermIOs,
-}
-
-unsafe impl AsReprBytes for IoctlSetTermIOs {}
-unsafe impl AsReprBytesMut for IoctlSetTermIOs {}
-
-impl Request<'_> {
-    pub fn send_termios_get<W: AsFd + std::io::Write>(w: W) -> Result<Sequence> {
-	let hdr = Header::new(RequestCode::IoctlTermiosGet, &());
-	let seq = hdr.seq()?;
-
-	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()) ])?;
-
-	Ok(seq)
-    }
-
-    pub fn send_termios_set<W: AsFd + std::io::Write>(w: W, cmd: u32, ios: TermIOs) -> Result<Sequence> {
-	let info = IoctlSetTermIOs {
-	    cmd:	cmd.into(),
-	    ios:	ios,
-	};
-
-	let hdr = Header::new(RequestCode::IoctlTermiosSet, &info);
-	let seq = hdr.seq()?;
-
-	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
-				IoSlice::new(info.as_repr_bytes()) ])?;
-
-	Ok(seq)
-    }
-}
-
 
 mod compile_test {
     #![allow(dead_code)]

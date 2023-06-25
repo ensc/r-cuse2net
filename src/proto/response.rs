@@ -4,7 +4,7 @@ use std::os::fd::AsFd;
 use std::time::Duration;
 
 use super::io::{recv_to, recv_exact_timeout, send_all, send_vectored_all};
-use super::ioctl::TermIOs;
+use super::ioctl::{TermIOs, Arg};
 use super::{Sequence, Result, AsReprBytes, AsReprBytesMut, TIMEOUT_READ, Error};
 use super::endian::*;
 
@@ -13,8 +13,7 @@ use super::endian::*;
 pub enum ResponseCode {
     Result = 1,
     Write = 2,
-    IoctlData = 3,
-    IoctlTermios = 4,
+    Ioctl = 3,
 }
 
 impl ResponseCode {
@@ -26,8 +25,7 @@ impl ResponseCode {
 	Some(match v {
 	    1	=> Self::Result,
 	    2	=> Self::Write,
-	    3	=> Self::IoctlData,
-	    4	=> Self::IoctlTermios,
+	    3	=> Self::Ioctl,
 	    _	=> return None,
 	})
     }
@@ -37,25 +35,27 @@ impl ResponseCode {
 pub enum Response {
     Ok,
     Write(u32),
-    IoctlData(u64, Vec<u8>),
-    IoctlTermios(TermIOs),
+    Ioctl(u8, Arg),
 }
 
 impl Response {
     const MAX_SZ: usize = 0x1_0000;
 
     #[instrument(level="trace", skip(w))]
-    pub fn send_ioctl_termios<W: AsFd + std::io::Write>(w: W, seq: Sequence, ios: TermIOs) -> Result<()> {
+    pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, seq: Sequence, arg: Arg) -> Result<()> {
+	let arg_type = arg.code().as_repr_bytes();
+	let data = arg.as_repr_bytes();
 	let hdr = Header {
-	    op:		ResponseCode::IoctlTermios.as_u8().into(),
+	    op:		ResponseCode::Ioctl.as_u8().into(),
 	    err:	0.into(),
-	    len:	(core::mem::size_of_val(&ios) as u32).into(),
+	    len:	((arg_type.len() + data.len()) as u32).into(),
 	    seq:	seq.0.into(),
 	    ..Default::default()
 	};
 
 	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
-				IoSlice::new(ios.as_repr_bytes()) ])?;
+				IoSlice::new(arg_type),
+				IoSlice::new(data) ])?;
 
 	Ok(())
     }
@@ -136,7 +136,7 @@ impl Response {
 	    ResponseCode::Write				=>
 		Self::Write(recv_to(&r, be32::uninit(), &mut rx_len)?.into()),
 
-	    ResponseCode::IoctlData			=> {
+	    ResponseCode::Ioctl				=> {
 		let rc = recv_to(&r, be64::uninit(), &mut rx_len)?.into();
 		let data = match *rx_len.as_ref().unwrap() {
 		    0	=> Vec::new(),

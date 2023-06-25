@@ -129,7 +129,7 @@ impl TermIOs {
 	res
     }
 
-    pub fn into_os(self) -> TermIOsOs {
+    pub fn into_os(self) -> ioctl_ffi::termios {
 	let mut res = ioctl_ffi::termios {
 	    c_iflag:	self.iflag.into(),
 	    c_oflag:	self.oflag.into(),
@@ -143,10 +143,10 @@ impl TermIOs {
 	    *v = self.cc[idx].into();
 	}
 
-	TermIOsOs::V1(res)
+	res
     }
 
-    pub fn into_os2(self) -> TermIOsOs {
+    pub fn into_os2(self) -> ioctl_ffi::termios2 {
 	let mut res = ioctl_ffi::termios2 {
 	    c_iflag:	self.iflag.into(),
 	    c_oflag:	self.oflag.into(),
@@ -162,6 +162,14 @@ impl TermIOs {
 	    *v = self.cc[idx].into();
 	}
 
-	TermIOsOs::V2(res)
+	res
+    }
+
+    pub fn into_ext_os(self) -> TermIOsOs {
+	TermIOsOs::V1(self.into_os())
+    }
+
+    pub fn into_ext_os2(self) -> TermIOsOs {
+	TermIOsOs::V2(self.into_os2())
     }
 }

@@ -4,23 +4,23 @@ use ensc_cuse_ffi::IoctlParams;
 use ensc_cuse_ffi::ffi as cuse_ffi;
 use cuse_ffi::ioctl_flags;
 
-use ensc_ioctl_ffi::ffi as ioctl_ffi;
-use ioctl_ffi::ioctl;
-
+use ensc_ioctl_ffi::BadIoctl;
 
 use crate::Result;
 use crate::CuseDevice;
 
-pub fn decode_ioctl<F: AsFd>(dev: &CuseDevice<F>, unique: u64,
-			     IoctlParams{ flags, cmd, arg, in_size, out_size, .. }: &IoctlParams,
-			     _data: &[u8]) -> Result<bool> {
+pub fn cuse_complete_ioctl<F: AsFd>(
+    dev: &CuseDevice<F>, unique: u64,
+    IoctlParams{ flags, cmd, arg, in_size, out_size, .. }: &IoctlParams,
+    _data: &[u8]) -> Result<bool>
+{
     use ensc_cuse_ffi::AsBytes;
 
     if !flags.contains(ioctl_flags::UNRESTRICTED) {
 	return Ok(true);
     }
 
-    let cmd: ioctl = (*cmd).into();
+    let cmd = BadIoctl::new((*cmd).into());
     let in_size = *in_size as usize;
     let out_size = *out_size as usize;
     let flags = *flags;
@@ -30,30 +30,14 @@ pub fn decode_ioctl<F: AsFd>(dev: &CuseDevice<F>, unique: u64,
 	return Ok(true)
     }
 
-    let info_in = match cmd {
-	ioctl::TIOCSLCKTRMIOS |
-	ioctl::TCSETSW |
-	ioctl::TCSETSF |
-	ioctl::TCSETS			=> Some((arg, core::mem::size_of::<ioctl_ffi::termios>())),
-	ioctl::TIOCSWINSZ		=> Some((arg, core::mem::size_of::<ioctl_ffi::winsize>())),
-
-	ioctl::TIOCSSOFTCAR |
-	ioctl::TIOCMSET |
-	ioctl::TIOCMBIC |
-	ioctl::TIOCMBIS			=> Some((arg, core::mem::size_of::<nix::libc::c_int>())),
-
-	cmd if cmd.is_write()		=> Some((arg, cmd.get_size())),
-
-	_				=> None,
+    let info_in = match cmd.is_write() {
+	true		=> Some((arg, cmd.get_size())),
+	false		=> None,
     };
 
-    let info_out = match cmd {
-	ioctl::TCGETS			=> Some((arg, core::mem::size_of::<ioctl_ffi::termios>())),
-	ioctl::TCGETS2			=> Some((arg, core::mem::size_of::<ioctl_ffi::termios2>())),
-
-	cmd if cmd.is_read()		=> Some((arg, cmd.get_size())),
-
-	_				=> None,
+    let info_out = match cmd.is_read() {
+	true		=> Some((arg, cmd.get_size())),
+	false		=> None,
     };
 
     if info_in.is_none() && info_out.is_none() {

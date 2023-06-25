@@ -119,6 +119,14 @@ unsafe impl AsReprBytesMut for &mut [u8] {
     }
 }
 
+// Vec<u8>
+
+unsafe impl AsReprBytes for Vec<u8> {
+    fn as_repr_bytes(&self) -> &[u8] {
+	self.as_slice()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

@@ -8,14 +8,14 @@ use std::thread::JoinHandle;
 
 use parking_lot::{Condvar, RwLock, Mutex};
 
-use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags};
+use ensc_cuse_ffi::ffi::{self as cuse_ffi};
 use ensc_cuse_ffi::{IoctlParams, OpInInfo};
 
-use ensc_ioctl_ffi::ffi as ioctl_ffi;
+use ensc_ioctl_ffi::{ffi as ioctl_ffi};
 use ioctl_ffi::ioctl;
 
-use crate::proto::{Sequence, AsReprBytes};
-use crate::proto::ioctl::TermIOs;
+use crate::proto::Sequence;
+use crate::proto::ioctl::Arg;
 use crate::{CuseFileDevice, Error, proto};
 
 use super::CONNECT_TIMEOUT;
@@ -32,18 +32,14 @@ pub struct WriteInfo {
 enum Request {
     Release,
     Write,
-    IoctlGeneric,
-    IoctlTermiosGet(ioctl),
+    Ioctl(ioctl),
 }
 
 #[derive(Clone, Debug)]
 enum Pending {
     Release,
     Write(Box<WriteInfo>),
-    IoctlGeneric{ cmd: ioctl, arg: u64 },
-    IoctlGenericRW{ cmd: ioctl, data: Option<Vec<u8>> },
-    IoctlTermiosGet{ cmd: ioctl },
-    IoctlTermiosSet{ cmd: ioctl, ios: crate::proto::ioctl::TermIOs },
+    Ioctl{cmd: ioctl, arg: Arg},
 }
 
 #[derive(Default)]
@@ -117,38 +113,21 @@ impl DeviceInner {
 		info.send_response(&self.cuse, &[ write_resp.as_bytes() ])?;
 	    }
 
-	    Request::IoctlTermiosGet(cmd)	=> {
-		let ios = match resp {
-		    proto::Response::IoctlTermios(ios)	=> ios,
-		    r				=> {
-			warn!("unexpected response {r:?}");
-			return Err(proto::Error::BadResponse.into());
-		    }
-		};
+	    Request::Ioctl(cmd)		=> {
+		todo!();
 
-		let ios = match cmd {
-		    ioctl::TCGETS	=> ios.into_os(),
-		    ioctl::TCGETS2	=> ios.into_os2(),
-		    _			=>
-			panic!("internal error: mismatching cmd {cmd:?}"),
-		};
-
-		let ios = ios.as_repr_bytes();
-
-		let hdr = cuse_ffi::fuse_ioctl_out {
-		    result:		0,
-		    flags:		ioctl_flags::UNRESTRICTED,
-		    in_iovs:		0,
-		    out_iovs:		1,
-		};
-
-		debug!("hdr={hdr:?}, ios={ios:?}");
-
-		info.send_response(&self.cuse, &[ hdr.as_bytes(),
-						  ios ])?;
+//		let hdr = cuse_ffi::fuse_ioctl_out {
+//		    result:		0,
+//		    flags:		ioctl_flags::UNRESTRICTED,
+//		    in_iovs:		0,
+//		    out_iovs:		1,
+//		};
+//
+//		debug!("hdr={hdr:?}, ios={ios:?}");
+//
+//		info.send_response(&self.cuse, &[ hdr.as_bytes(),
+//						  ios ])?;
 	    }
-
-	    Request::IoctlGeneric	=> todo!(),
 
 	}
 
@@ -190,7 +169,7 @@ impl DeviceInner {
 
 	trace!("got state");
 
-	let res = match &req {
+	let res = match req {
 	    Pending::Release	=> {
 		state.closing = true;
 		proto::Request::send_release(&self.conn)
@@ -201,16 +180,9 @@ impl DeviceInner {
 		proto::Request::send_write(&self.conn, wrinfo.offset, &wrinfo.data)
 		.map(|seq| (seq, Request::Write)),
 
-
-	    Pending::IoctlTermiosGet { cmd }	=>
-		proto::Request::send_termios_get(&self.conn)
-		.map(|seq| (seq, Request::IoctlTermiosGet(*cmd))),
-
-	    Pending::IoctlGeneric { cmd, arg }	=> todo!(),
-	    Pending::IoctlGenericRW { cmd, data }	=> todo!(),
-	    Pending::IoctlTermiosSet { cmd, ios }	=> todo!(),
-
-
+	    Pending::Ioctl { cmd, arg }	=>
+		proto::Request::send_ioctl(&self.conn, cmd, arg)
+		    .map(|seq| (seq, Request::Ioctl(cmd))),
 	};
 
 	match res {
@@ -370,93 +342,21 @@ impl Device {
 
     pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])
     {
-	let cmd: ioctl = params.cmd.into();
-
-	#[allow(unreachable_patterns)]
-	let req = match cmd {
-	    ioctl::TIOCSLCKTRMIOS |
-	    ioctl::TCSETSW |
-	    ioctl::TCSETSF |
-	    ioctl::TCSETS		=> Pending::IoctlTermiosSet {
-		cmd:	cmd,
-		ios:	TermIOs::try_from_os(data).unwrap(),
+	let arg = match Arg::decode(params.cmd, params.arg, data, proto::ioctl::Source::Cuse) {
+	    Err(e)	=> {
+		error!("failed to decode ioctl");
+		info.send_error(&self.0.cuse, nix::libc::EINVAL as u32)
+		    .unwrap_or_else(|e| error!("failed to send error response: {e:?}"));
+		return;
 	    },
 
-	    ioctl::TCSETSW2 |
-	    ioctl::TCSETSF2 |
-	    ioctl::TCSETS2		=> Pending::IoctlTermiosSet {
-		cmd:	cmd,
-		ios:	TermIOs::try_from_raw_os2(data).unwrap(),
-	    },
-
-	    ioctl::TCGETS |
-	    ioctl::TCGETS2		=> Pending::IoctlTermiosGet {
-		cmd:	cmd,
-	    },
-
-	    ioctl::TIOCSSOFTCAR |
-	    ioctl::TIOCMSET |
-	    ioctl::TIOCMBIC |
-	    ioctl::TIOCMBIS |
-	    ioctl::TIOCSWINSZ		=> Pending::IoctlGenericRW {
-		cmd:	cmd,
-		data:	Some(data.to_owned()),
-	    },
-
-	    ioctl::TIOCMGET |
-	    ioctl::TIOCGETD |
-	    ioctl::TIOCMIWAIT |
-	    ioctl::TIOCGWINSZ |
-	    ioctl::TIOCINQ |
-	    ioctl::FIONREAD |
-	    ioctl::TIOCOUTQ |
-	    ioctl::TIOCGSOFTCAR		=> Pending::IoctlGenericRW {
-		cmd:	cmd,
-		data:	None,
-	    },
-
-	    // TODO: handle internally
-	    ioctl::TIOCGPGRP |
-	    ioctl::TIOCSPGRP |
-	    ioctl::TIOCGSID |
-	    ioctl::TIOCGEXCL |
-	    ioctl::TIOCNXCL |
-	    ioctl::TIOCEXCL		=> {
-		todo!()
-	    }
-
-	    ioctl::TCSBRK |
-	    ioctl::TCSBRKP |
-	    ioctl::TIOCSBRK |
-	    ioctl::TIOCCBRK |
-	    ioctl::TCXONC |
-	    ioctl::TCFLSH |
-	    ioctl::TIOCCONS |
-	    ioctl::TIOCSCTTY |
-	    ioctl::TIOCNOTTY		 => Pending::IoctlGeneric {
-		cmd:	cmd,
-		arg:	params.arg,
-		},
-
-
-
-	    c if !c.is_io()		=> Pending::IoctlGeneric {
-		cmd:	cmd,
-		arg:	params.arg,
-	    },
-
-	    c if c.is_write()		=> Pending::IoctlGenericRW {
-		cmd:	cmd,
-		data:	Some(data.to_owned()),
-	    },
-
-	    _				=> Pending::IoctlGenericRW {
-		cmd:	cmd,
-		data:	None,
-	    }
+	    Ok(arg)	=> arg
 	};
 
-	self.0.state.write().pending.push_back((req, info));
+	self.0.state.write().pending.push_back((Pending::Ioctl {
+	    cmd: params.cmd.into(),
+	    arg: arg
+	}, info));
 	self.0.state_change.notify_all();
     }
 }

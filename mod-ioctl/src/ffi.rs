@@ -1,7 +1,7 @@
 #![allow(non_camel_case_types)]
 
-macro_rules! declare_ioctls {
-}
+//macro_rules! declare_ioctls {
+//}
 
 #[derive(Debug, Clone, Copy)]
 struct BitGeo {
@@ -66,7 +66,7 @@ impl ioctl {
     const DIR_WRITE: u32 = 1;
     const DIR_READ:  u32 = 2;
 
-    const fn IOC(dir: u32, tp: u8, nr: u32, sz: usize) -> Self {
+    pub(crate) const fn IOC(dir: u32, tp: u8, nr: u32, sz: usize) -> Self {
 	Self(Self::DIR.encode(dir) | Self::TYPE.encode(tp as u32) |
 	     Self::NR.encode(nr) | Self::SIZE.encode(sz as u32))
     }
@@ -85,6 +85,10 @@ impl ioctl {
 
     pub(crate) const fn IOWR<T: Sized>(tp: u8, nr: u32) -> Self {
 	Self::IOC(Self::DIR_WRITE | Self::DIR_READ, tp, nr, core::mem::size_of::<T>())
+    }
+
+    pub const fn as_numeric(self) -> u32 {
+	self.0
     }
 
     pub const fn is_io(self) -> bool {

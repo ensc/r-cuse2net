@@ -130,7 +130,7 @@ fn main() -> Result<()> {
 	    }
 
 	    OpIn::FuseIoctl(args, data)	=> {
-		if virtdev::ioctl::decode_ioctl(f, info.unique, &args, data)? {
+		if virtdev::ioctl::cuse_complete_ioctl(f, info.unique, &args, data)? {
 		    devices.for_fh(args.fh, |dev| dev.ioctl(info, args, data));
 		}
 	    }

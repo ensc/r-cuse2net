@@ -6,9 +6,7 @@ use std::os::fd::{OwnedFd, FromRawFd, AsRawFd};
 use std::path::Path;
 use std::net::TcpStream;
 
-use ensc_ioctl_ffi::ffi::termios2;
-
-use crate::proto::ioctl::TermIOs;
+use crate::proto::ioctl::Arg;
 use crate::proto::{self, Sequence};
 
 pub struct Device {
@@ -72,15 +70,9 @@ impl Device {
 		    self.write(seq, wrinfo.offset.into(), data)?;
 		}
 
-		proto::Request::Ioctl(seq, ioinfo, data)	=> {
-		    self.ioctl(seq, ioinfo.cmd.into(), ioinfo.arg.into(), data)?;
+		proto::Request::Ioctl(seq, ioinfo, arg)	=> {
+		    self.ioctl(seq, ioinfo.cmd.into(), arg)?;
 		},
-
-		proto::Request::IoctlTermiosGet(seq)		=> {
-		    self.ioctl_termios_get(seq)?;
-		}
-
-		proto::Request::IoctlTermiosSet(seq, cmd, ios)	=> todo!(),
 	    }
 	}
     }
@@ -104,25 +96,22 @@ impl Device {
 	Ok(())
     }
 
-    fn ioctl(&self, seq: Sequence, cmd: u32, arg: u64, data: &[u8]) -> crate::Result<()> {
-	todo!()
-    }
+    fn ioctl(&self, seq: Sequence, cmd: u32, arg: Arg) -> crate::Result<()> {
+	let mut os_arg = Arg::new_os_arg();
 
-    fn ioctl_termios_get(&self, seq: Sequence) -> crate::Result<()> {
-	let mut ios: MaybeUninit<termios2> = MaybeUninit::uninit();
+	let (cmd, arg, buf) = arg.encode(cmd, &mut os_arg)?;
+
 	let rc = unsafe {
-	    nix::libc::ioctl(self.fd.as_raw_fd(), nix::libc::TCGETS2, ios.as_mut_ptr())
+	    nix::libc::ioctl(self.fd.as_raw_fd(), cmd as u64, arg)
 	};
 
 	if rc < 0 {
 	    return Err(nix::Error::from_i32(rc).into());
 	}
 
-	let ios = unsafe {
-	    ios.assume_init()
-	};
+	let res_arg = Arg::decode(cmd, arg, buf, proto::ioctl::Source::Device)?;
 
-	proto::Response::send_ioctl_termios(&self.conn, seq, TermIOs::from_os2(&ios))?;
+	proto::Response::send_ioctl(&self.conn, seq, res_arg)?;
 
 	Ok(())
     }

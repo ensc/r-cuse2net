@@ -1,24 +1,19 @@
-use crate::ffi::{ioctl, termios};
+use crate::ffi::{ioctl};
+use crate::ffi;
 
-struct DirSize(u8, u16);
+use nix::libc;
 
-impl DirSize {
-    pub const fn ioc(dir: u8, sz: usize) -> Self {
-	Self(dir, sz as u16)
-    }
+macro_rules! declare_bad {
+    ({$( $ioctl:ident => $dir:tt($type:ty),)* })	=> {
+	$( const $ioctl:	ioctl = ioctl::$dir::<$type>(ioctl::$ioctl.get_type(), ioctl::$ioctl.get_nr()); )*
 
-    pub const fn IOR<T: Sized>() -> Self {
-	Self::IOC(Self::DIR_READ, tp, nr, core::mem::size_of::<T>())
-    }
-
-    pub const fn IOW<T: Sized>(tp: u8, nr: u32) -> Self {
-	Self::IOC(Self::DIR_WRITE, tp, nr, core::mem::size_of::<T>())
-    }
-
-    pub const fn IOWR<T: Sized>(tp: u8, nr: u32) -> Self {
-	Self::IOC(Self::DIR_WRITE | Self::DIR_READ, tp, nr, core::mem::size_of::<T>())
-    }
-
+	pub const fn new(cmd: ioctl) -> Self {
+	    match cmd {
+		$( ioctl::$ioctl	=> Self::Fixup(cmd, Self::$ioctl), )*
+		_			=> Self::Native(cmd),
+	    }
+	}
+    };
 }
 
 #[derive(Debug, Clone)]
@@ -28,35 +23,53 @@ pub enum BadIoctl {
 }
 
 impl BadIoctl {
-    const TCGETS: ioctl = ioctl::IOR::<termios>(b'T', 0x01);
+    declare_bad!({
+	TCGETS		=> IOR(ffi::termios),
+	TCSETS		=> IOW(ffi::termios),
+	TCSETSW		=> IOW(ffi::termios),
+	TCSETSF		=> IOW(ffi::termios),
 
-    pub const fn new(cmd: ioctl) -> Self {
-	match cmd {
-	    ioctl::TCGETS	=> Self::Fixup(cmd, Self::TCGETS),
-	    cmd			=> Self::Native(cmd),
-	}
-    }
+	TIOCGLCKTRMIOS	=> IOR(ffi::termios),
+	TIOCSLCKTRMIOS	=> IOW(ffi::termios),
 
-    const fn get_good(&self) -> ioctl {
+	TIOCGSOFTCAR	=> IOR(libc::c_int),
+	TIOCSSOFTCAR	=> IOW(libc::c_int),
+
+	TIOCMGET	=> IOR(libc::c_int),
+	TIOCMBIS	=> IOW(libc::c_int),
+	TIOCMBIC	=> IOW(libc::c_int),
+	TIOCMSET	=> IOW(libc::c_int),
+    });
+}
+
+impl BadIoctl {
+    pub const fn get_good(&self) -> ioctl {
 	match self {
 	    BadIoctl::Native(cmd)	=> *cmd,
 	    BadIoctl::Fixup(_, cmd)	=> *cmd,
 	}
     }
 
-    pub const fn is_io(self) -> bool {
+    pub const fn get_native(&self) -> ioctl {
+	match self {
+	    BadIoctl::Native(cmd)	=> *cmd,
+	    BadIoctl::Fixup(cmd, _)	=> *cmd,
+	}
+    }
+
+    pub const fn is_io(&self) -> bool {
 	self.get_good().is_io()
     }
 
-    pub const fn is_write(self) -> bool {
+    pub const fn is_write(&self) -> bool {
 	self.get_good().is_write()
     }
 
-    pub const fn is_read(self) -> bool {
+    pub const fn is_read(&self) -> bool {
 	self.get_good().is_write()
     }
 
-    pub const fn get_size(self) -> usize {
+    pub const fn get_size(&self) -> usize {
 	self.get_good().get_size()
     }
 }
