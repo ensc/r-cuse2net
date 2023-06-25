@@ -56,7 +56,7 @@ fn sub_slice(buf: &mut [MaybeUninit<u8>], sz: usize) -> MaybeUninit<&mut [u8]> {
 impl <'a> Request<'a> {
     const MAX_SZ: usize = 0x1_0000;
 
-    #[instrument(level="trace", skip(r, tmp_buf), ret)]
+    //#[instrument(level="trace", skip(r, tmp_buf), ret)]
     pub fn recv<R: AsFd + std::io::Read>(r: R, tmp_buf: &'a mut [MaybeUninit<u8>]) -> Result<Self> {
 	let mut hdr = Header::uninit();
 
@@ -161,7 +161,7 @@ unsafe impl AsReprBytes for Open {}
 unsafe impl AsReprBytesMut for Open {}
 
 impl Request<'_> {
-    #[instrument(level="trace", skip(w), ret)]
+    //#[instrument(level="trace", skip(w), ret)]
     pub fn send_open<W: AsFd + std::io::Write>(w: W, flags: u32) -> Result<Sequence> {
 	let info = Open {
 	    flags: flags.into(),
@@ -187,7 +187,7 @@ unsafe impl AsReprBytes for Release {}
 unsafe impl AsReprBytesMut for Release {}
 
 impl Request<'_> {
-    #[instrument(level="trace", skip(w), ret)]
+    //#[instrument(level="trace", skip(w), ret)]
     pub fn send_release<W: AsFd + std::io::Write>(w: W) -> Result<Sequence> {
 	let info = Release {
 	};
@@ -212,7 +212,7 @@ unsafe impl AsReprBytes for Write {}
 unsafe impl AsReprBytesMut for Write {}
 
 impl Request<'_> {
-    #[instrument(level="trace", skip(w), ret)]
+    //#[instrument(level="trace", skip(w), ret)]
     pub fn send_write<W: AsFd + std::io::Write>(w: W, offset: u64, data: &[u8]) -> Result<Sequence> {
 	let info = Write {
 	    offset:	offset.into(),
@@ -242,7 +242,7 @@ unsafe impl AsReprBytes for Ioctl {}
 unsafe impl AsReprBytesMut for Ioctl {}
 
 impl Request<'_> {
-    #[instrument(level="trace", skip(w), ret)]
+    //#[instrument(level="trace", skip(w), ret)]
     pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, cmd: ioctl, arg: Arg) -> Result<Sequence> {
 	let info = Ioctl {
 	    cmd:	cmd.as_numeric().into(),

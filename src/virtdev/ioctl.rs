@@ -40,6 +40,8 @@ pub fn cuse_complete_ioctl<F: AsFd>(
 	false		=> None,
     };
 
+    trace!("ioctl-retry: cmd={cmd:?}, in={info_in:?}, out={info_out:?}");
+
     if info_in.is_none() && info_out.is_none() {
 	return Ok(true);
     }

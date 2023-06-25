@@ -4,7 +4,7 @@ use std::os::fd::AsFd;
 use std::time::Duration;
 
 use super::io::{recv_to, recv_exact_timeout, send_all, send_vectored_all};
-use super::ioctl::{TermIOs, Arg};
+use super::ioctl::Arg;
 use super::{Sequence, Result, AsReprBytes, AsReprBytesMut, TIMEOUT_READ, Error};
 use super::endian::*;
 
@@ -31,36 +31,63 @@ impl ResponseCode {
     }
 }
 
+struct Alloc {
+    buf: Vec<u8>,
+}
+
+impl Alloc {
+    pub fn new(sz: usize) -> Self {
+	Self {
+	    buf: Vec::with_capacity(sz)
+	}
+    }
+
+    pub fn as_uninit(&mut self) -> MaybeUninit<&mut [u8]> {
+	let slice = unsafe {
+	    core::slice::from_raw_parts_mut(self.buf.as_mut_ptr(), self.buf.capacity())
+	};
+
+	MaybeUninit::new(slice)
+    }
+}
+
 #[derive(Debug)]
 pub enum Response {
     Ok,
     Write(u32),
-    Ioctl(u8, Arg),
+    Ioctl(u64, Arg),
 }
 
 impl Response {
     const MAX_SZ: usize = 0x1_0000;
 
-    #[instrument(level="trace", skip(w))]
-    pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, seq: Sequence, arg: Arg) -> Result<()> {
-	let arg_type = arg.code().as_repr_bytes();
+    //#[instrument(level="trace", skip(w))]
+    pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, seq: Sequence, rc: u64, arg: Arg) -> Result<()> {
+	let ioctl = Ioctl {
+	    retval:	rc.into(),
+	    arg_type:	arg.code(),
+
+	    _pad:	Default::default(),
+	};
+	let ioctl = ioctl.as_repr_bytes();
 	let data = arg.as_repr_bytes();
+
 	let hdr = Header {
 	    op:		ResponseCode::Ioctl.as_u8().into(),
 	    err:	0.into(),
-	    len:	((arg_type.len() + data.len()) as u32).into(),
+	    len:	((ioctl.len() + data.len()) as u32).into(),
 	    seq:	seq.0.into(),
 	    ..Default::default()
 	};
 
 	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
-				IoSlice::new(arg_type),
+				IoSlice::new(ioctl),
 				IoSlice::new(data) ])?;
 
 	Ok(())
     }
 
-    #[instrument(level="trace", skip(w))]
+    //#[instrument(level="trace", skip(w))]
     pub fn send_write<W: AsFd + std::io::Write>(w: W, seq: Sequence, size: u32) -> Result<()> {
 	let wrinfo: be32 = size.into();
 	let hdr = Header {
@@ -78,7 +105,7 @@ impl Response {
     }
 
 
-    #[instrument(level="trace", skip(w))]
+    //#[instrument(level="trace", skip(w))]
     pub fn send_err<W: AsFd + std::io::Write>(w: W, seq: Sequence, err: i32) -> Result<()> {
 	let hdr = Header {
 	    op:		ResponseCode::Result.as_u8().into(),
@@ -93,7 +120,7 @@ impl Response {
 	Ok(())
     }
 
-    #[instrument(level="trace", skip(w))]
+    //#[instrument(level="trace", skip(w))]
     pub fn send_ok<W: AsFd + std::io::Write>(w: W, seq: Sequence) -> Result<()> {
 	let hdr = Header {
 	    op:		ResponseCode::Result.as_u8().into(),
@@ -137,32 +164,13 @@ impl Response {
 		Self::Write(recv_to(&r, be32::uninit(), &mut rx_len)?.into()),
 
 	    ResponseCode::Ioctl				=> {
-		let rc = recv_to(&r, be64::uninit(), &mut rx_len)?.into();
-		let data = match *rx_len.as_ref().unwrap() {
-		    0	=> Vec::new(),
-		    len	=> {
-			let mut data = Vec::with_capacity(len);
-			let buf: &mut [u8] = unsafe {
-			    std::slice::from_raw_parts_mut(data.as_mut_ptr(), len)
-			};
-			let buf = MaybeUninit::new(buf);
+		let ioctl: Ioctl = recv_to(&r, Ioctl::uninit(), &mut rx_len)?.into();
+		let mut tmp = Alloc::new(*rx_len.as_ref().unwrap());
+		let arg = recv_to(&r, tmp.as_uninit(), &mut rx_len)?;
+		let arg = Arg::from_raw(ioctl.arg_type.into(), arg)?;
 
-			recv_to(&r, buf, &mut rx_len)?;
-
-			unsafe {
-			    data.set_len(len);
-			}
-
-			data
-		    }
-		};
-
-
-		Self::IoctlData(rc, data)
+		Self::Ioctl(ioctl.retval.into(), arg)
 	    },
-
-	    ResponseCode::IoctlTermios			=>
-		Self::IoctlTermios(recv_to(&r, TermIOs::uninit(), &mut rx_len)?.into()),
 
 	    ResponseCode::Result			=> {
 		warn!("bad response {hdr:?}");
@@ -172,12 +180,12 @@ impl Response {
 	}))
     }
 
-    #[instrument(level="trace", skip(r), ret)]
+    //#[instrument(level="trace", skip(r), ret)]
     pub fn recv_to<R: AsFd + std::io::Read>(r: R) -> Result<(Option<Sequence>, Self)> {
 	Self::recv_internal(r, Some(TIMEOUT_READ))
     }
 
-    #[instrument(level="trace", skip(r), ret)]
+    //#[instrument(level="trace", skip(r), ret)]
     pub fn recv<R: AsFd + std::io::Read>(r: R) -> Result<(Option<Sequence>, Self)> {
 	Self::recv_internal(r, None)
     }
@@ -228,6 +236,15 @@ impl Header{
 	}
     }
 }
+
+struct Ioctl {
+    retval:	be64,
+    arg_type:	be8,
+    _pad:	[u8;7],
+}
+
+unsafe impl AsReprBytes for Ioctl {}
+unsafe impl AsReprBytesMut for Ioctl {}
 
 mod compile_test {
     #![allow(dead_code)]

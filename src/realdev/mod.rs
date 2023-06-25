@@ -97,9 +97,7 @@ impl Device {
     }
 
     fn ioctl(&self, seq: Sequence, cmd: u32, arg: Arg) -> crate::Result<()> {
-	let mut os_arg = Arg::new_os_arg();
-
-	let (cmd, arg, buf) = arg.encode(cmd, &mut os_arg)?;
+	let (cmd, arg, buf) = arg.encode(cmd)?;
 
 	let rc = unsafe {
 	    nix::libc::ioctl(self.fd.as_raw_fd(), cmd as u64, arg)
@@ -109,9 +107,9 @@ impl Device {
 	    return Err(nix::Error::from_i32(rc).into());
 	}
 
-	let res_arg = Arg::decode(cmd, arg, buf, proto::ioctl::Source::Device)?;
+	let res_arg = Arg::decode(cmd, arg, &buf, proto::ioctl::Source::Device)?;
 
-	proto::Response::send_ioctl(&self.conn, seq, res_arg)?;
+	proto::Response::send_ioctl(&self.conn, seq, rc as u64, res_arg)?;
 
 	Ok(())
     }

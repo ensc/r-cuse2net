@@ -66,7 +66,7 @@ impl BadIoctl {
     }
 
     pub const fn is_read(&self) -> bool {
-	self.get_good().is_write()
+	self.get_good().is_read()
     }
 
     pub const fn get_size(&self) -> usize {

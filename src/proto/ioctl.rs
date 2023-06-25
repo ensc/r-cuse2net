@@ -65,6 +65,48 @@ pub enum Arg {
     UInt(be32),
 }
 
+fn uninit_arg<T: Sized>() -> (u64, Vec<u8>) {
+    let sz = core::mem::size_of::<T>();
+    let mut buf: Vec<T> = Vec::with_capacity(1);
+
+    let ptr = buf.as_mut_ptr();
+    let cap = buf.capacity();
+
+    core::mem::forget(buf);
+
+    let mut buf = unsafe {
+	Vec::from_raw_parts(ptr as * mut u8, sz, cap * sz)
+    };
+
+    buf.resize(sz, 0);
+
+    (ptr as u64, buf)
+}
+
+fn obj_to_arg<T: Sized>(obj: T) -> (u64, Vec<u8>) {
+    let sz = core::mem::size_of_val(&obj);
+    let mut buf: Vec<T> = Vec::with_capacity(1);
+
+    buf.push(obj);
+
+    let ptr = buf.as_mut_ptr();
+    let cap = buf.capacity();
+
+    assert_eq!(buf.len(), 1);
+
+    core::mem::forget(buf);
+
+    let buf = unsafe {
+	Vec::from_raw_parts(ptr as * mut u8, sz, cap * sz)
+    };
+
+    (ptr as u64, buf)
+}
+
+fn obj_to_cuse<T: Sized>(obj: T) -> Option<Vec<u8>> {
+    Some(obj_to_arg(obj).1)
+}
+
 impl Arg {
     pub fn new_os_arg() -> OsArg
     {
@@ -141,47 +183,67 @@ impl Arg {
 	}
     }
 
-    pub fn encode<'a>(self, cmd: u32, buf: &'a mut OsArg) -> Result<(u32, u64, &'a [u8])>
+    pub fn cuse_response(self, cmd: ioctl) -> Result<Option<Vec<u8>>> {
+	let cmd = BadIoctl::new(cmd);
+
+	Ok(match cmd.get_native() {
+	    ioctl::TIOCGLCKTRMIOS |
+	    ioctl::TCGETS		=> match self {
+		Self::TermIOs(ios)	=> obj_to_cuse(ios.into_os()),
+		_			=> return Err(Error::BadIoctlParam),
+	    },
+	    ioctl::TCGETS2		=> match self {
+		Self::TermIOs(ios)	=> obj_to_cuse(ios.into_os2()),
+		_			=> return Err(Error::BadIoctlParam),
+	    },
+	    ioctl::TIOCSWINSZ		=> match self {
+		// todo: implemnt me!
+		_			=> return Err(Error::BadIoctlParam),
+	    },
+
+	    _ if !cmd.is_read()		=> None,
+
+	    _				=> match self {
+		Self::None |
+		Self::Arg(_) |
+		Self::RawArg(_)		=> None,
+
+		Arg::TermIOs(ios)	=> {
+		    error!("can not handle termios {ios:?} here");
+		    return Err(Error::BadIoctlParam);
+		},
+
+		Arg::Raw(data)		=> Some(data),
+		Arg::Int(val)		=> obj_to_cuse(val.as_native()),
+		Arg::UInt(val)		=> obj_to_cuse(val.as_native()),
+	    }
+	})
+    }
+
+    pub fn encode(self, cmd: u32) -> Result<(u32, u64, Vec<u8>)>
     {
 	let cmd = BadIoctl::new(cmd.into());
-
-	let size = cmd.get_size();
-
-	if size < OsArg::SZ {
-	    error!("not enough space for {:x}; required {size}, have {}",
-		   cmd.get_native().as_numeric(), OsArg::SZ);
-	    return Err(Error::BadLength);
-	}
-
 	let code = cmd.get_native().as_numeric();
 
-	let (arg, buf): (u64, &'a [u8]) = match cmd.get_native() {
+	let (arg, buf): (u64, Vec<u8>) = match cmd.get_native() {
 	    ioctl::TIOCSLCKTRMIOS |
 	    ioctl::TCSETSW |
 	    ioctl::TCSETSF |
 	    ioctl::TCSETS		=> match self {
-		Self::TermIOs(ios)	=> {
-		    unsafe { *buf.termios = ios.into_os() };
-		    (buf.as_u64_ptr(), &[])
-		},
+		Self::TermIOs(ios)	=> obj_to_arg(ios.into_os()),
 		_			=> return Err(Error::BadIoctlParam),
 	    }
 
 	    ioctl::TCSETSW2 |
 	    ioctl::TCSETSF2 |
 	    ioctl::TCSETS2		=> match self {
-		Self::TermIOs(ios)	=> {
-		    unsafe { *buf.termios2 = ios.into_os2() };
-		    (buf.as_u64_ptr(), &[])
-		},
+		Self::TermIOs(ios)	=> obj_to_arg(ios.into_os2()),
 		_			=> return Err(Error::BadIoctlParam),
 	    }
 
 	    ioctl::TIOCGLCKTRMIOS |
 	    ioctl::TCGETS		=> match self {
-		Self::None		=> {
-		    (buf.as_u64_ptr(), buf.as_termios_slice())
-		}
+		Self::None		=> uninit_arg::<ioctl_ffi::termios>(),
 		_			=> return Err(Error::BadIoctlParam),
 	    }
 

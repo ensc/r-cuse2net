@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 
 use parking_lot::{Condvar, RwLock, Mutex};
 
-use ensc_cuse_ffi::ffi::{self as cuse_ffi};
+use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags};
 use ensc_cuse_ffi::{IoctlParams, OpInInfo};
 
 use ensc_ioctl_ffi::{ffi as ioctl_ffi};
@@ -75,7 +75,49 @@ impl DeviceInner {
 	self.state.write().requests.remove(&seq)
     }
 
-    #[instrument(level="trace", skip(self), ret)]
+    fn handle_ioctl(&self, info: OpInInfo, cmd: ioctl, resp: proto::Response) -> crate::Result<()> {
+	use ensc_cuse_ffi::AsBytes;
+
+	let (retval, arg) = match resp {
+	    proto::Response::Ioctl(retval, arg)	=> (retval, arg),
+	    r				=> {
+		warn!("unexpected response {r:?}");
+		return Err(proto::Error::BadResponse.into());
+	    }
+	};
+
+	debug!("IOCTL: {cmd:?}, {arg:?}");
+
+	let data = arg.cuse_response(cmd)?;
+
+	let hdr = cuse_ffi::fuse_ioctl_out {
+	    result:		0,
+	    flags:		ioctl_flags::UNRESTRICTED,
+	    in_iovs:		0,
+	    out_iovs:		1,
+	};
+
+	let mut resp_data: [&[u8];2] = [
+	    hdr.as_bytes(),
+	    &[],
+	];
+
+	let mut pos = 1;
+
+	if let Some(data) = &data {
+	    resp_data[pos] = data.as_ref();
+	    pos += 1;
+	}
+
+	debug!("IOCTL: iov={resp_data:?}");
+
+
+	info.send_response(&self.cuse, &resp_data[..pos])?;
+
+	Ok(())
+    }
+
+    //#[instrument(level="trace", skip(self), ret)]
     fn handle_response(&self, seq: Sequence, resp: proto::Response) -> crate::Result<()> {
 	use ensc_cuse_ffi::AsBytes;
 
@@ -113,22 +155,7 @@ impl DeviceInner {
 		info.send_response(&self.cuse, &[ write_resp.as_bytes() ])?;
 	    }
 
-	    Request::Ioctl(cmd)		=> {
-		todo!();
-
-//		let hdr = cuse_ffi::fuse_ioctl_out {
-//		    result:		0,
-//		    flags:		ioctl_flags::UNRESTRICTED,
-//		    in_iovs:		0,
-//		    out_iovs:		1,
-//		};
-//
-//		debug!("hdr={hdr:?}, ios={ios:?}");
-//
-//		info.send_response(&self.cuse, &[ hdr.as_bytes(),
-//						  ios ])?;
-	    }
-
+	    Request::Ioctl(cmd)		=> self.handle_ioctl(info, cmd, resp)?,
 	}
 
 	Ok(())
@@ -161,7 +188,7 @@ impl DeviceInner {
 	info!("rx_thread terminated");
     }
 
-    #[instrument(level="trace", skip(self), ret)]
+    //#[instrument(level="trace", skip(self), ret)]
     fn handle_cuse(&self, req: Pending, info: OpInInfo) -> Result<(), (OpInInfo, Error)> {
 	debug!("tx thread: handle {req:?}");
 
@@ -273,7 +300,7 @@ impl Device {
 	Ok(())
     }
 
-    #[instrument(level="trace")]
+    //#[instrument(level="trace")]
     pub(super) fn open(args: OpenArgs) -> Result<Self, Error> {
 	let conn = TcpStream::connect_timeout(&args.addr, CONNECT_TIMEOUT)?;
 
