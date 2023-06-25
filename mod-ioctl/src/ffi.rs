@@ -71,19 +71,19 @@ impl ioctl {
 	     Self::NR.encode(nr) | Self::SIZE.encode(sz as u32))
     }
 
-    const fn IO(tp: u8, nr: u32) -> Self {
+    pub(crate) const fn IO(tp: u8, nr: u32) -> Self {
 	Self::IOC(Self::DIR_NONE, tp, nr, 0)
     }
 
-    const fn IOR<T: Sized>(tp: u8, nr: u32) -> Self {
+    pub(crate) const fn IOR<T: Sized>(tp: u8, nr: u32) -> Self {
 	Self::IOC(Self::DIR_READ, tp, nr, core::mem::size_of::<T>())
     }
 
-    const fn IOW<T: Sized>(tp: u8, nr: u32) -> Self {
+    pub(crate) const fn IOW<T: Sized>(tp: u8, nr: u32) -> Self {
 	Self::IOC(Self::DIR_WRITE, tp, nr, core::mem::size_of::<T>())
     }
 
-    const fn IOWR<T: Sized>(tp: u8, nr: u32) -> Self {
+    pub(crate) const fn IOWR<T: Sized>(tp: u8, nr: u32) -> Self {
 	Self::IOC(Self::DIR_WRITE | Self::DIR_READ, tp, nr, core::mem::size_of::<T>())
     }
 

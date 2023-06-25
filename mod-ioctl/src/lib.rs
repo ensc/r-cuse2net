@@ -5,3 +5,6 @@ extern crate tracing;
 
 pub mod ffi;
 mod error;
+mod bad;
+
+pub use bad::BadIoctl;
