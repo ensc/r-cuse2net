@@ -169,14 +169,34 @@ pub struct IoctlParams {
 }
 
 #[derive(Debug, Clone)]
+pub struct ReadParams {
+    pub fh:		u64,
+    pub offset:		u64,
+    pub size:		u32,
+    pub read_flags:	ffi::read_flags,
+    pub lock_owner:	u64,
+    pub flags:		ffi::fh_flags,
+}
+
+#[derive(Debug, Clone)]
+pub struct PollParams {
+    pub fh:		u64,
+    pub kh:		u64,
+    pub flags:		ffi::poll_flags,
+    pub events:		ffi::poll_events,
+}
+
+#[derive(Debug, Clone)]
 pub enum OpIn<'a> {
     Unknown,
     CuseInit{ version: KernelVersion, flags: ffi::cuse_flags },
-    FuseOpen{ flags: u32, open_flags: ffi::open_in_flags },
-    FuseRelease { fh: u64, flags: u32, release_flags: ffi::release_flags, lock_owner: u64 },
+    FuseOpen{ flags: ffi::fh_flags, open_flags: ffi::open_in_flags },
+    FuseRelease { fh: u64, flags: ffi::fh_flags, release_flags: ffi::release_flags, lock_owner: u64 },
     FuseWrite{ fh: u64, offset: u64, write_flags: ffi::write_flags,
-	       lock_owner: u64, flags: u32, data: &'a[u8] },
+	       lock_owner: u64, flags: ffi::fh_flags, data: &'a[u8] },
+    FuseRead(ReadParams),
     FuseIoctl(IoctlParams, &'a [u8]),
+    FusePoll(PollParams),
     FuseInterrupt { unique: u64 },
 }
 
@@ -233,6 +253,19 @@ impl <'a> OpIn<'a> {
 		}
 	    }
 
+	    ffi::fuse_opcode::FUSE_READ	=> {
+		let opdata: &ffi::fuse_read_in = iter.next()?.ok_or(Error::Eof)?;
+
+		Self::FuseRead(ReadParams {
+		    fh:			opdata.fh,
+		    size:		opdata.size,
+		    offset:		opdata.offset,
+		    read_flags:	opdata.read_flags,
+		    lock_owner:		opdata.lock_owner,
+		    flags:		opdata.flags,
+		})
+	    }
+
 	    ffi::fuse_opcode::FUSE_INTERRUPT => {
 		let opdata: &ffi::fuse_interrupt_in = iter.next()?.ok_or(Error::Eof)?;
 
@@ -255,6 +288,17 @@ impl <'a> OpIn<'a> {
 		    out_size:		opdata.out_size,
 		}, indata)
 	    }
+
+	    ffi::fuse_opcode::FUSE_POLL		=> {
+		let opdata: &ffi::fuse_poll_in = iter.next()?.ok_or(Error::Eof)?;
+
+		Self::FusePoll(PollParams {
+		    fh:		opdata.fh,
+		    kh:		opdata.kh,
+		    flags:	opdata.flags,
+		    events:	opdata.events,
+		})
+	    },
 
 	    _		=> Self::Unknown,
 	};

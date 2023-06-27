@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicU64;
 use ensc_cuse_ffi::{OpInInfo};
 use ensc_cuse_ffi::AsBytes;
 
-use ensc_cuse_ffi::ffi::open_in_flags;
+use ensc_cuse_ffi::ffi::{open_in_flags, fh_flags};
 use parking_lot::RwLock;
 
 use crate::error::Error;
@@ -107,7 +107,7 @@ impl DeviceRegistry {
 	}
     }
 
-    pub fn create(&self, addr: SocketAddr, op_info: OpInInfo, flags: u32, open_in_flags: open_in_flags)
+    pub fn create(&self, addr: SocketAddr, op_info: OpInInfo, flags: fh_flags, open_in_flags: open_in_flags)
 		  -> Result<(), Error>
     {
 	let registry = self.clone();

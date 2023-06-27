@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 
 use parking_lot::{Condvar, RwLock, Mutex};
 
-use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags};
+use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags, fh_flags};
 use ensc_cuse_ffi::{IoctlParams, OpInInfo};
 
 use ensc_ioctl_ffi::{ffi as ioctl_ffi};
@@ -24,7 +24,7 @@ use super::CONNECT_TIMEOUT;
 pub struct WriteInfo {
     pub offset:		u64,
     pub write_flags:	cuse_ffi::write_flags,
-    pub flags:		u32,
+    pub flags:		cuse_ffi::fh_flags,
     pub data:		Vec<u8>,
 }
 
@@ -56,7 +56,7 @@ struct DeviceInner {
     tx_hdl:		Option<JoinHandle<()>>,
     fuse_hdl:		u64,
     conn:		TcpStream,
-    flags:		u32,
+    flags:		cuse_ffi::fh_flags,
     state:		RwLock<State>,
     state_change:	Condvar,
     state_mutex:	Mutex<()>,
@@ -262,12 +262,12 @@ pub(super) struct OpenArgs {
     pub addr:		SocketAddr,
     pub cuse:		Arc<CuseFileDevice>,
     pub fuse_hdl:	u64,
-    pub flags:		u32,
+    pub flags:		fh_flags,
 }
 
 impl Device {
-    fn run_remote_open(conn: &TcpStream, flags: u32) -> Result<(), Error> {
-	let seq = proto::Request::send_open(conn, flags)?;
+    fn run_remote_open(conn: &TcpStream, flags: fh_flags) -> Result<(), Error> {
+	let seq = proto::Request::send_open(conn, flags.as_ffi())?;
 
 	match proto::Response::recv_to(conn) {
 	    Err(proto::Error::RemoteError(r_seq, _)) |
@@ -371,7 +371,7 @@ impl Device {
     {
 	let arg = match Arg::decode(params.cmd, params.arg, data, proto::ioctl::Source::Cuse) {
 	    Err(e)	=> {
-		error!("failed to decode ioctl");
+		error!("failed to decode ioctl: {e:?}");
 		info.send_error(&self.0.cuse, nix::libc::EINVAL as u32)
 		    .unwrap_or_else(|e| error!("failed to send error response: {e:?}"));
 		return;

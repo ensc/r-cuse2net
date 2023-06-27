@@ -47,24 +47,6 @@ impl From<be32> for ioctl_ffi::c_lflag {
     }
 }
 
-pub enum TermIOsOs {
-    V1(ioctl_ffi::termios),
-    V2(ioctl_ffi::termios2),
-}
-
-unsafe impl AsReprBytes for TermIOsOs {
-    fn as_repr_bytes(&self) -> &[u8] {
-	let (ptr, len) = match self {
-	    Self::V1(ios)	=> (ios as * const _ as * const u8, core::mem::size_of_val(ios)),
-	    Self::V2(ios)	=> (ios as * const _ as * const u8, core::mem::size_of_val(ios)),
-	};
-
-	unsafe {
-	    core::slice::from_raw_parts(ptr, len)
-	}
-    }
-}
-
 impl TermIOs {
     pub fn try_from_os(raw: &[u8]) -> Result<Self> {
 	if raw.len() < core::mem::size_of::<ioctl_ffi::termios>() {
@@ -163,13 +145,5 @@ impl TermIOs {
 	}
 
 	res
-    }
-
-    pub fn into_ext_os(self) -> TermIOsOs {
-	TermIOsOs::V1(self.into_os())
-    }
-
-    pub fn into_ext_os2(self) -> TermIOsOs {
-	TermIOsOs::V2(self.into_os2())
     }
 }

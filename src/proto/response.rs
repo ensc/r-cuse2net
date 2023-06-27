@@ -164,7 +164,7 @@ impl Response {
 		Self::Write(recv_to(&r, be32::uninit(), &mut rx_len)?.into()),
 
 	    ResponseCode::Ioctl				=> {
-		let ioctl: Ioctl = recv_to(&r, Ioctl::uninit(), &mut rx_len)?.into();
+		let ioctl = recv_to(&r, Ioctl::uninit(), &mut rx_len)?;
 		let mut tmp = Alloc::new(*rx_len.as_ref().unwrap());
 		let arg = recv_to(&r, tmp.as_uninit(), &mut rx_len)?;
 		let arg = Arg::from_raw(ioctl.arg_type.into(), arg)?;

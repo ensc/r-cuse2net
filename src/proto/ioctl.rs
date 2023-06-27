@@ -128,7 +128,7 @@ impl Arg {
     pub fn from_raw(code: u8, buf: &[u8]) -> Result<Self> {
 	Ok(match code {
 	    0	=> {
-		if buf.len() > 0 {
+		if !buf.is_empty() {
 		    warn!("Arg:None with non-empty data");
 		}
 		Self::None
@@ -247,7 +247,24 @@ impl Arg {
 		_			=> return Err(Error::BadIoctlParam),
 	    }
 
-	    _ => todo!()
+	    _ if !cmd.is_write()	=> match self {
+		Self::Arg(arg) |
+		Self::RawArg(arg)	=> (arg.into(), Vec::new()),
+		_			=> {
+		    error!("impossible internal state");
+		    return Err(Error::BadIoctlParam);
+		}
+	    },
+
+	    _				=> match self {
+		Self::Raw(_data)	=> todo!(),
+		Self::Int(val)		=> obj_to_arg(val.as_native()),
+		Self::UInt(val)		=> obj_to_arg(val.as_native()),
+		_			=> {
+		    error!("impossible internal state");
+		    return Err(Error::BadIoctlParam);
+		}
+	    }
 	};
 
 	Ok((code, arg, buf))
@@ -257,6 +274,7 @@ impl Arg {
 	let cmd = BadIoctl::new(cmd.into());
 	let size = cmd.get_size();
 
+	#[allow(clippy::len_zero)]
 	if buf.len() > 0 && size < buf.len() {
 	    warn!("excess data in ioctl param ({size} < {})", buf.len());
 	}

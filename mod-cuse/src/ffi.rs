@@ -7,6 +7,10 @@ pub const FUSE_MIN_READ_BUFFER: usize = 8192;
 
 macro_rules! declare_flags {
     ($id:ident, $type:ty, { $( $flag:ident = $bit:expr, )* })	=> {
+	declare_flags!($id, $type, { $( $flag = $bit, )* }, special_map = |_| Option::<&str>::None, extra_all = 0);
+    };
+
+    ($id:ident, $type:ty, { $( $flag:ident = $bit:expr, )* }, special_map = $map:expr, extra_all = $extra_all:expr)	=> {
 	#[repr(transparent)]
 	#[derive(Clone, Copy, Default)]
 	pub struct $id($type);
@@ -19,7 +23,7 @@ macro_rules! declare_flags {
 	    }
 
 	    pub const fn all() -> Self {
-		Self(0 $( | (1 << $bit) )*)
+		Self($extra_all $( | (1 << $bit) )*)
 	    }
 
 	    pub const fn bit_to_name(bit: u32) -> Option<&'static str> {
@@ -35,6 +39,10 @@ macro_rules! declare_flags {
 
 	    pub const fn contains(self, other: Self) -> bool {
 		self.0 & other.0 != 0
+	    }
+
+	    pub const fn as_ffi(self) -> $type {
+		self.0
 	    }
 	}
 
@@ -60,9 +68,13 @@ macro_rules! declare_flags {
 
 		let unknown = self.0 & !Self::all().0;
 
-		let mut v = self.0 & !unknown;
+		let mut v = self.0 & !unknown & !$extra_all;
 		let mut bit = 0;
 		let mut res = Vec::new();
+
+		if let Some(info) = $map(&self) {
+		    res.push(Cow::Borrowed(info));
+		}
 
 		while v != 0 {
 		    if v & 1 != 0 {
@@ -77,6 +89,10 @@ macro_rules! declare_flags {
 		    res.push(Cow::Owned(format!("0x{unknown:x}")));
 		}
 
+		if res.is_empty() {
+		    res.push(Cow::Borrowed("0"))
+		}
+
 		struct RawString(String);
 		impl std::fmt::Debug for RawString {
 		    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -84,12 +100,41 @@ macro_rules! declare_flags {
 		    }
 		}
 
-		f.debug_tuple(stringify!($id))
-		    .field(&RawString(res.join(&"|")))
-		    .finish()
+		f.write_str(&res.join(&"|"))
 	    }
 	}
 
+    }
+}
+
+declare_flags!(fh_flags, u32, {
+    CREAT = 8,
+    EXCL = 9,
+    NOCTTY = 10,
+    TRUNC = 12,
+    APPEND = 13,
+    NONBLOCK = 14,
+    DSYNC = 16,
+    FASYNC = 17,
+    DIRECT = 18,
+    LARGEFILE = 20,
+    DIRECTORY = 21,
+    FOLLOW = 22,
+    NOATIME = 24,
+    CLOEXEC = 25,
+},
+	       special_map = |v| Self::decode_acc(v),
+	       extra_all = 3
+);
+
+impl fh_flags {
+    fn decode_acc(&self) -> Option<&'static str> {
+	match self.0 & 3 {
+	    0	=> Some("RDONLY"),
+	    1	=> Some("WRONLY"),
+	    2	=> Some("RDWR"),
+	    _	=> Some("BAD_ACC"),
+	}
     }
 }
 
@@ -121,6 +166,10 @@ declare_flags!(write_flags, u32, {
     KILL_SUIDGID = 2,
 });
 
+declare_flags!(read_flags, u32, {
+    LOCKOWNER = 1,
+});
+
 declare_flags!(ioctl_flags, u32, {
     COMPAT = 0,
     UNRESTRICTED = 1,
@@ -128,6 +177,26 @@ declare_flags!(ioctl_flags, u32, {
     X32BIT = 3,
     DIR = 4,
     COMPAT_X32 = 5,
+});
+
+declare_flags!(poll_flags, u32, {
+    SCHEDULE_NOTIFY = 0,
+});
+
+declare_flags!(poll_events, u32, {
+    IN = 0,
+    PRI = 1,
+    OUT = 2,
+    ERR = 3,
+    HUP = 4,
+    NVAL = 5,
+    RDNORM = 6,
+    RDBAND = 7,
+    WRNORM = 8,
+    WRBAND = 9,
+    MSG = 10,
+    REMOVE = 11,
+    RDHUP = 12,
 });
 
 #[repr(transparent)]
@@ -149,7 +218,7 @@ impl fuse_opcode {
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_open_in {
-    pub flags:		u32,
+    pub flags:		fh_flags,
     pub open_flags:	open_in_flags,
 }
 
@@ -165,7 +234,7 @@ pub struct fuse_open_out {
 #[derive(Debug)]
 pub struct fuse_release_in {
     pub fh:		u64,
-    pub flags:		u32,
+    pub flags:		fh_flags,
     pub release_flags:	release_flags,
     pub lock_owner:	u64,
 }
@@ -178,7 +247,19 @@ pub struct fuse_write_in {
     pub size:		u32,
     pub write_flags:	write_flags,
     pub lock_owner:	u64,
-    pub flags:		u32,
+    pub flags:		fh_flags,
+    pub _padding:	u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_read_in {
+    pub fh:		u64,
+    pub offset:		u64,
+    pub size:		u32,
+    pub read_flags:	read_flags,
+    pub lock_owner:	u64,
+    pub flags:		fh_flags,
     pub _padding:	u32,
 }
 
@@ -220,6 +301,28 @@ pub struct fuse_ioctl_out {
     pub flags:		ioctl_flags,
     pub in_iovs:	u32,
     pub out_iovs:	u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_poll_in {
+    pub fh:		u64,
+    pub kh:		u64,
+    pub flags:		poll_flags,
+    pub events:		poll_events,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_poll_out {
+    pub revents:	poll_events,
+    pub padding:	u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct fuse_notify_poll_wakeup_out {
+    pub kh:		u64,
 }
 
 #[repr(C)]
