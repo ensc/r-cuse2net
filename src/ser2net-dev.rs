@@ -50,7 +50,7 @@ fn run_thread(sock: TcpStream, device: PathBuf) -> Result<()> {
 
 	match op {
 	    proto::Request::Open(args, seq) =>
-		realdev::Device::open(device, seq, args.flags.as_native(), sock)?,
+		realdev::Device::open(device, seq, args.flags.as_ffi(), sock)?,
 
 	    op		=> {
 		warn!("unexpected operation {op:?}");
@@ -83,6 +83,8 @@ fn main() -> Result<()> {
     let socket = TcpListener::bind(SocketAddr::new(args.listen, args.port))?;
 
     info!("running ser2net-dev");
+
+    r_ser2net::deadlock_detect();
 
     loop {
 	let (conn, addr) = socket.accept()?;

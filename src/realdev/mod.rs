@@ -10,13 +10,14 @@ use std::path::Path;
 use std::net::TcpStream;
 use std::thread::scope;
 
+use nix::fcntl::OFlag;
+
 use crate::proto::ioctl::Arg;
 use crate::proto::{self, Sequence};
 
 pub struct Device {
     fd:		OwnedFd,
     conn:	TcpStream,
-    fh_flags:	u32,
 }
 
 impl Device {
@@ -24,15 +25,14 @@ impl Device {
 	(flags & (nix::libc::O_NONBLOCK as u32)) != 0
     }
 
-    pub fn open<P: AsRef<Path>>(p: P, seq: Sequence, flags: u32, conn: TcpStream) -> crate::Result<Self> {
-	use nix::fcntl::OFlag;
+    pub fn open<P: AsRef<Path>>(p: P, seq: Sequence, flags: OFlag, conn: TcpStream) -> crate::Result<Self> {
 	use nix::sys::stat::Mode;
 
 	let p = p.as_ref();
 
 	let fd = nix::fcntl::open(
 	    p,
-	    OFlag::O_CLOEXEC | OFlag::O_NONBLOCK | OFlag::O_NOCTTY | OFlag::O_RDWR,
+	    OFlag::O_CLOEXEC | OFlag::O_NONBLOCK | OFlag::O_NOCTTY | flags,
 	    Mode::empty());
 
 	let fd = match fd {
@@ -49,7 +49,6 @@ impl Device {
 	Ok(Self {
 	    fd:		fd,
 	    conn:	conn,
-	    fh_flags:	flags,
 	})
     }
 
@@ -119,7 +118,7 @@ impl Device {
 
 	let req = (seq, rdinfo.size.as_native() as usize);
 
-	match Self::is_nonblock(rdinfo.fh_flags.into()) {
+	match rdinfo.fh_flags.is_nonblock() {
 	    true	=> read.read_nonblock(req),
 	    false	=> read.push_request(req),
 	}

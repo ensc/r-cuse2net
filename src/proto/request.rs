@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::io::IoSlice;
 use std::os::fd::AsFd;
 
+use ensc_cuse_ffi::ffi as cuse_ffi;
 use ensc_cuse_ffi::{WriteParams, ReadParams, PollParams};
 use ensc_ioctl_ffi::ffi::ioctl;
 
@@ -12,6 +13,11 @@ use super::io::{send_vectored_all, recv_exact_timeout, recv_to};
 use super::endian::*;
 
 static OP_SEQ: AtomicU64 = AtomicU64::new(1);
+
+#[path = "request_flags.rs"]
+mod flags;
+
+use flags::*;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -168,7 +174,7 @@ unsafe impl AsReprBytesMut for Header {}
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct Open {
-    pub flags:	be32,
+    pub flags:	FhFlags,
     _pad:	[u8;4]
 }
 
@@ -177,7 +183,7 @@ unsafe impl AsReprBytesMut for Open {}
 
 impl Request<'_> {
     //#[instrument(level="trace", skip(w), ret)]
-    pub fn send_open<W: AsFd + std::io::Write>(w: W, flags: u32) -> Result<Sequence> {
+    pub fn send_open<W: AsFd + std::io::Write>(w: W, flags: cuse_ffi::fh_flags) -> Result<Sequence> {
 	let info = Open {
 	    flags: flags.into(),
 	    ..Default::default()
@@ -221,7 +227,7 @@ impl Request<'_> {
 #[derive(Debug, Default)]
 pub struct Write {
     pub offset:		be64,
-    pub fh_flags:	be32,
+    pub fh_flags:	FhFlags,
     _pad:		[be8;4],
 }
 
@@ -233,7 +239,7 @@ impl Request<'_> {
     pub fn send_write<W: AsFd + std::io::Write>(w: W, wrinfo: WriteParams, data: &[u8]) -> Result<Sequence> {
 	let info = Write {
 	    offset:	wrinfo.offset.into(),
-	    fh_flags:	wrinfo.flags.as_ffi().into(),
+	    fh_flags:	wrinfo.flags.into(),
 	    _pad:	Default::default(),
 	};
 
@@ -253,7 +259,7 @@ impl Request<'_> {
 pub struct Read {
     pub offset:		be64,
     pub size:		be32,
-    pub fh_flags:	be32,
+    pub fh_flags:	FhFlags,
 }
 
 unsafe impl AsReprBytes for Read {}
@@ -265,7 +271,7 @@ impl Request<'_> {
 	let info = Read {
 	    offset:	rdinfo.offset.into(),
 	    size:	rdinfo.size.into(),
-	    fh_flags:	rdinfo.flags.as_ffi().into(),
+	    fh_flags:	rdinfo.flags.into(),
 	};
 
 	let hdr = Header::new(RequestCode::Read, &info);

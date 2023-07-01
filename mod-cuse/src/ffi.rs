@@ -108,24 +108,34 @@ macro_rules! declare_flags {
 }
 
 declare_flags!(fh_flags, u32, {
-    CREAT = 8,
-    EXCL = 9,
-    NOCTTY = 10,
-    TRUNC = 12,
-    APPEND = 13,
-    NONBLOCK = 14,
-    DSYNC = 16,
-    FASYNC = 17,
-    DIRECT = 18,
-    LARGEFILE = 20,
-    DIRECTORY = 21,
-    FOLLOW = 22,
-    NOATIME = 24,
-    CLOEXEC = 25,
+    CREAT = 6,
+    EXCL = 7,
+    NOCTTY = 8,
+    TRUNC = 9,
+    APPEND = 10,
+    NONBLOCK = 11,
+    DSYNC = 12,
+    FASYNC = 13,
+    DIRECT = 14,
+    LARGEFILE = 15,
+    DIRECTORY = 16,
+    FOLLOW = 17,
+    NOATIME = 18,
+    CLOEXEC = 19,
 },
-	       special_map = |v| Self::decode_acc(v),
+	       special_map = Self::decode_acc,
 	       extra_all = 3
 );
+
+ mod fh_flags_test {
+     use super::fh_flags as F;
+     use nix::libc;
+
+     // TODO: bit positions above are arch dependent; generalize it
+     const _: () = assert!(F::CREAT.as_ffi() as i32 == libc::O_CREAT);
+     const _: () = assert!(F::NONBLOCK.as_ffi() as i32 == libc::O_NONBLOCK);
+     const _: () = assert!(F::CLOEXEC.as_ffi() as i32 == libc::O_CLOEXEC);
+}
 
 impl fh_flags {
     fn decode_acc(&self) -> Option<&'static str> {
@@ -135,6 +145,18 @@ impl fh_flags {
 	    2	=> Some("RDWR"),
 	    _	=> Some("BAD_ACC"),
 	}
+    }
+
+    pub const fn is_rdonly(self) -> bool {
+	(self.0 & 3) == 0
+    }
+
+    pub const fn is_wronly(self) -> bool {
+	(self.0 & 3) == 1
+    }
+
+    pub const fn is_rdwr(self) -> bool {
+	(self.0 & 3) == 2
     }
 }
 

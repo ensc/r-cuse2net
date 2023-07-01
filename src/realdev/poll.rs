@@ -63,8 +63,8 @@ impl <'a> PollInner<'a> {
 
 	Ok(Self {
 	    device:	dev,
-	    fd_rx:	Some(unsafe { OwnedFd::from_raw_fd(pipe.0.into()) }),
-	    fd_tx:	Some(unsafe { OwnedFd::from_raw_fd(pipe.1.into()) }),
+	    fd_rx:	Some(unsafe { OwnedFd::from_raw_fd(pipe.0) }),
+	    fd_tx:	Some(unsafe { OwnedFd::from_raw_fd(pipe.1) }),
 	    fd_epoll:	unsafe { OwnedFd::from_raw_fd(efd) },
 
 	    khs:	HashMap::new()
@@ -155,7 +155,7 @@ impl Poll<'_> {
 
     // TODO: move to super::
     fn consume_sync(&self, fd: RawFd) {
-	#[allow(invalid_value)]
+	#[allow(invalid_value, clippy::uninit_assumed_init)]
 	let mut tmp: [u8;1] = unsafe {
 	    MaybeUninit::uninit().assume_init()
 	};
@@ -181,7 +181,7 @@ impl Poll<'_> {
 	epoll::epoll_ctl(efd, epoll::EpollOp::EpollCtlAdd, fd_ser,  &mut ev_ser)?;
 
 	while self.is_alive() {
-	    #[allow(invalid_value)]
+	    #[allow(invalid_value, clippy::uninit_assumed_init)]
 	    let mut events: [EpollEvent;2] = unsafe {
 		core::mem::MaybeUninit::uninit().assume_init()
 	    };

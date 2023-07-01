@@ -13,6 +13,22 @@ macro_rules! declare_endian {
 	    pub const fn as_native(&self) -> $type {
 		$conv(self.0)
 	    }
+
+	    pub fn bit_or_assign(&mut self, rhs: Self) {
+		self.0 |= rhs.0;
+	    }
+
+	    pub fn bit_and_assign(&mut self, rhs: Self) {
+		self.0 &= rhs.0;
+	    }
+
+	    pub const fn bit_or(self, rhs: Self) -> Self {
+		Self(self.0 | rhs.0)
+	    }
+
+	    pub const fn bit_and(self, rhs: Self) -> Self {
+		Self(self.0 & rhs.0)
+	    }
 	}
 
 	impl From<$type> for $name {
@@ -24,6 +40,22 @@ macro_rules! declare_endian {
 	impl From<$name> for $type {
 	    fn from(value: $name) -> Self {
 		value.as_native()
+	    }
+	}
+
+	impl std::ops::BitAnd for $name {
+	    type Output = Self;
+
+	    fn bitand(self, rhs: Self) -> Self::Output {
+		Self(self.0 & rhs.0)
+	    }
+	}
+
+	impl std::ops::BitOr for $name {
+	    type Output = Self;
+
+	    fn bitor(self, rhs: Self) -> Self::Output {
+		Self(self.0 | rhs.0)
 	    }
 	}
 

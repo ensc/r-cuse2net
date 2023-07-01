@@ -104,7 +104,7 @@ impl Response {
 	Ok(())
     }
 
-    fn send_poll_wakeup1<W: AsFd + std::io::Write>(w: W, kh: u64) -> Result<()> {
+    fn send_poll_wakeup_1<W: AsFd + std::io::Write>(w: W, kh: u64) -> Result<()> {
 	let kh: be64 = kh.into();
 	let kh = kh.as_repr_bytes();
 	let hdr = Header {
@@ -121,11 +121,7 @@ impl Response {
 	Ok(())
     }
 
-    pub fn send_poll_wakeup<W: AsFd + std::io::Write>(w: W, kh: &[u64]) -> Result<()> {
-	if kh.len() == 1 {
-	    return Self::send_poll_wakeup1(w, kh[0]);
-	}
-
+    pub fn send_poll_wakeup_n<W: AsFd + std::io::Write>(w: W, kh: &[u64]) -> Result<()> {
 	let kh: Vec<be64> = kh.iter().map(|h| be64::from(*h)).collect();
 	let kh: &[u8] = unsafe {
 	    core::slice::from_raw_parts(kh.as_ptr() as * const u8, kh.len() * 8)
@@ -143,6 +139,14 @@ impl Response {
 				IoSlice::new(kh) ])?;
 
 	Ok(())
+    }
+
+    pub fn send_poll_wakeup<W: AsFd + std::io::Write>(w: W, kh: &[u64]) -> Result<()> {
+	match kh.len() {
+	    0	=> Ok(()),
+	    1	=> Self::send_poll_wakeup_1(w, kh[0]),
+	    _	=> Self::send_poll_wakeup_n(w, kh),
+	}
     }
 
     pub fn send_read<W: AsFd + std::io::Write>(w: W, seq: Sequence, data: &[u8]) -> Result<()> {
@@ -281,7 +285,7 @@ impl Response {
 	    ResponseCode::Poll				=> {
 		let revent: PollEvent = recv_to(&r, be32::uninit(), &mut rx_len)?.into();
 
-		Self::Poll(revent.into())
+		Self::Poll(revent)
 	    }
 
 	    ResponseCode::PollWakeup1			=> {

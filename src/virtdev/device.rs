@@ -307,7 +307,7 @@ pub(super) struct OpenArgs {
 
 impl Device {
     fn run_remote_open(conn: &TcpStream, flags: fh_flags) -> Result<(), Error> {
-	let seq = proto::Request::send_open(conn, flags.as_ffi())?;
+	let seq = proto::Request::send_open(conn, flags)?;
 
 	match proto::Response::recv_to(conn) {
 	    Err(proto::Error::RemoteError(r_seq, _)) |
@@ -409,7 +409,8 @@ impl Device {
 
     pub fn read(&self, info: OpInInfo, params: ReadParams)
     {
-	todo!()
+	self.0.state.write().pending.push_back((Pending::Read(params), info));
+	self.0.state_change.notify_all();
     }
 
     pub fn poll(&self, info: OpInInfo, params: PollParams)

@@ -31,8 +31,8 @@ impl <'a> ReadInner<'a> {
 
 	Ok(Self {
 	    device:		dev,
-	    fd_rx:		Some(unsafe { OwnedFd::from_raw_fd(pipe.0.into()) }),
-	    fd_tx:		Some(unsafe { OwnedFd::from_raw_fd(pipe.1.into()) }),
+	    fd_rx:		Some(unsafe { OwnedFd::from_raw_fd(pipe.0) }),
+	    fd_tx:		Some(unsafe { OwnedFd::from_raw_fd(pipe.1) }),
 	    read_ops:		VecDeque::new(),
 	    pending_request:	None,
 	})
@@ -69,13 +69,6 @@ impl Read<'_> {
 	self.0.read().fd_tx.is_some()
     }
 
-    fn requested_size(&self) -> Option<usize> {
-	match self.0.read().read_ops.front() {
-	    None		=> None,
-	    Some((_, l))	=> Some(*l)
-	}
-    }
-
     fn next_request(&self) -> Option<ReadRequest> {
 	self.0.write().next_request()
     }
@@ -89,6 +82,7 @@ impl Read<'_> {
     }
 
     fn send_sync(fd: RawFd) {
+	#[allow(clippy::single_match)]
 	match nix::unistd::write(fd, &[ b'R' ]) {
 	    // TODO: what todo in error case?
 	    Err(e)	=> error!("failed to send sync signal: {e:?}"),
@@ -104,7 +98,7 @@ impl Read<'_> {
     }
 
     pub fn read_nonblock(&self, req: (Sequence, usize)) {
-	#[allow(invalid_value)]
+	#[allow(invalid_value, clippy::uninit_assumed_init)]
 	let mut buf: [u8; BUF_SZ] = unsafe {
 	    MaybeUninit::uninit().assume_init()
 	};
@@ -128,7 +122,7 @@ impl Read<'_> {
     }
 
     fn consume_sync(&self, fd: RawFd) {
-	#[allow(invalid_value)]
+	#[allow(invalid_value, clippy::uninit_assumed_init)]
 	let mut tmp: [u8;1] = unsafe {
 	    MaybeUninit::uninit().assume_init()
 	};
@@ -219,7 +213,7 @@ impl Read<'_> {
 	// own the RX side of the sync pipe
 	let fd_sync = self.0.write().fd_rx.take().unwrap();
 
-	#[allow(invalid_value)]
+	#[allow(invalid_value, clippy::uninit_assumed_init)]
 	let mut buf: [u8; BUF_SZ] = unsafe {
 	    MaybeUninit::uninit().assume_init()
 	};
