@@ -57,17 +57,22 @@ impl Device {
 	debug!("running device");
 
 	let read = read::Read::new(&self)?;
+	let poll = poll::Poll::new(&self)?;
 
 	scope(|s| {
 	    std::thread::Builder::new()
 		.name("read".to_string())
 		.spawn_scoped(s, || read.run())?;
 
-	    self.main(&read)
+	    std::thread::Builder::new()
+		.name("poll".to_string())
+		.spawn_scoped(s, || poll.run())?;
+
+	    self.main(&read, &poll)
 	})
     }
 
-    fn main(&self, read: &read::Read) -> crate::Result<()> {
+    fn main(&self, read: &read::Read, poll: &poll::Poll) -> crate::Result<()> {
 	debug!("running device");
 
 	let mut buf: [MaybeUninit<u8>; proto::MAX_MSG_SIZE] = [MaybeUninit::uninit(); proto::MAX_MSG_SIZE];
@@ -99,6 +104,10 @@ impl Device {
 		proto::Request::Ioctl(seq, ioinfo, arg)	=> {
 		    self.ioctl(seq, ioinfo.cmd.into(), arg)?;
 		},
+
+		proto::Request::Poll(seq, parm)		=> {
+		    self.poll(poll, seq, parm.kh.into(), parm.flags.into(), parm.events.into())?;
+		}
 	    }
 	}
     }
@@ -151,6 +160,15 @@ impl Device {
 	let res_arg = Arg::decode(cmd, arg, &buf, proto::ioctl::Source::Device)?;
 
 	proto::Response::send_ioctl(&self.conn, seq, rc as u64, res_arg)?;
+
+	Ok(())
+    }
+
+    fn poll(&self, poll: &poll::Poll, seq: Sequence, kh: u64, flags: u32, events: u32) -> crate::Result<()> {
+	match flags & proto::request::Poll::FLAG_SCHEDULE_NOTIFY {
+	    0	=> poll.poll_once((seq, events)),
+	    _	=> poll.poll((seq, kh, events)),
+	}
 
 	Ok(())
     }

@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 use parking_lot::{Condvar, RwLock, Mutex};
 
 use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags, fh_flags};
-use ensc_cuse_ffi::{IoctlParams, OpInInfo, WriteParams, ReadParams};
+use ensc_cuse_ffi::{IoctlParams, OpInInfo, WriteParams, ReadParams, PollParams};
 
 use ensc_ioctl_ffi::{ffi as ioctl_ffi};
 use ioctl_ffi::ioctl;
@@ -26,6 +26,7 @@ enum Request {
     Write,
     Read,
     Ioctl(ioctl),
+    Poll,
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +35,7 @@ enum Pending {
     Write(WriteParams, Vec<u8>),
     Read(ReadParams),
     Ioctl{cmd: ioctl, arg: Arg},
+    Poll(PollParams),
 }
 
 #[derive(Default)]
@@ -154,6 +156,16 @@ impl DeviceInner {
 	Ok(())
     }
 
+    fn handle_event(&self, resp: proto::Response) -> crate::Result<()> {
+	use proto::Response as R;
+
+	match resp {
+	    R::PollWakeup(khs)	=> {
+
+	    }
+	}
+    }
+
     fn rx_thread(self: Arc<Self>) {
 	info!("rx_thread running");
 
@@ -206,7 +218,11 @@ impl DeviceInner {
 
 	    Pending::Ioctl { cmd, arg }	=>
 		proto::Request::send_ioctl(&self.conn, cmd, arg)
-		    .map(|seq| (seq, Request::Ioctl(cmd))),
+		.map(|seq| (seq, Request::Ioctl(cmd))),
+
+	    Pending::Poll(pollinfo)		=>
+		proto::Request::send_poll(&self.conn, pollinfo)
+		.map(|seq| (seq, Request::Poll)),
 	};
 
 	match res {
@@ -366,6 +382,13 @@ impl Device {
 
     pub fn read(&self, info: OpInInfo, params: ReadParams)
     {
+	todo!()
+    }
+
+    pub fn poll(&self, info: OpInInfo, params: PollParams)
+    {
+	self.0.state.write().pending.push_back((Pending::Poll(params), info));
+
     }
 
     pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])

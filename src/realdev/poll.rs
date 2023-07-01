@@ -2,10 +2,10 @@
 
 use std::{os::fd::{OwnedFd, FromRawFd, AsRawFd, RawFd}, collections::HashMap, mem::MaybeUninit};
 
-use nix::sys::epoll::{self, EpollEvent, EpollFlags};
+use nix::{sys::epoll::{self, EpollEvent, EpollFlags}, poll::{PollFlags, PollFd}};
 use parking_lot::RwLock;
 
-use crate::proto::{ Sequence, response::PollEvent as ProtoEvent };
+use crate::proto::{ Sequence, response::PollEvent as ProtoEvent, self };
 
 use super::Device;
 
@@ -15,16 +15,42 @@ type Kh = u64;
 const TOK_SYNC: u64 = 1;
 const TOK_SER: u64 = 2;
 
+pub fn proto_to_poll(ev: ProtoEvent) -> PollFlags {
+    fn map(ev: ProtoEvent, bit_proto: i16, bit_poll: PollFlags) -> PollFlags {
+	match ev & (bit_proto as u32) {
+	    0		=> PollFlags::empty(),
+	    bit_proto	=> bit_poll,
+	}
+    }
+
+    map(ev, nix::libc::POLLIN,     PollFlags::POLLIN) |
+    map(ev, nix::libc::POLLOUT,    PollFlags::POLLOUT) |
+    map(ev, nix::libc::POLLPRI,    PollFlags::POLLPRI) |
+    map(ev, nix::libc::POLLRDBAND, PollFlags::POLLRDBAND) |
+    map(ev, nix::libc::POLLWRBAND, PollFlags::POLLWRBAND)
+}
+
+pub fn poll_to_epoll(ev: PollFlags) -> EpollFlags {
+    fn map(ev: PollFlags, bit_poll: PollFlags, bit_epoll: EpollFlags) -> EpollFlags {
+	match ev.contains(bit_poll) {
+	    true	=> bit_epoll,
+	    false	=> EpollFlags::empty(),
+	}
+    }
+
+    map(ev, PollFlags::POLLIN,     EpollFlags::EPOLLIN) |
+    map(ev, PollFlags::POLLOUT,    EpollFlags::EPOLLOUT) |
+    map(ev, PollFlags::POLLPRI,    EpollFlags::EPOLLPRI) |
+    map(ev, PollFlags::POLLRDBAND, EpollFlags::EPOLLRDBAND) |
+    map(ev, PollFlags::POLLWRBAND, EpollFlags::EPOLLWRBAND)
+}
+
 pub struct PollInner<'a> {
     device:		&'a Device,
     fd_rx:		Option<OwnedFd>,
     fd_tx:		Option<OwnedFd>,
 
-    khs:		HashMap<Kh, EpollEvent>,
-
-    kh_in:		Vec<Kh>,
-    kh_out:		Vec<Kh>,
-    kh_pri:		Vec<Kh>,
+    khs:		HashMap<Kh, EpollFlags>,
 
     fd_epoll:		OwnedFd,
 }
@@ -41,64 +67,59 @@ impl <'a> PollInner<'a> {
 	    fd_tx:	Some(unsafe { OwnedFd::from_raw_fd(pipe.1.into()) }),
 	    fd_epoll:	unsafe { OwnedFd::from_raw_fd(efd) },
 
-	    kh_in:	Vec::new(),
-	    kh_out:	Vec::new(),
-	    kh_pri:	Vec::new(),
+	    khs:	HashMap::new()
 	})
     }
 
     pub fn signal(&self, ev: EpollFlags) {
-	use std::collections::hash_map::Entry;
+	let khs: Vec<_> = self.khs.iter()
+	    .filter(|(kh, kh_ev)| {
+		ev.contains((**kh_ev) | EpollFlags::EPOLLERR | EpollFlags::EPOLLHUP)
+	    })
+	    .map(|(kh, kh_ev)| *kh)
+	    .collect();
 
-	let mut res: HashMap<Kh, u32> = HashMap::new();
+	let _ = proto::Response::send_poll_wakeup(&self.device.conn, &khs)
+	    .map_err(|e| error!("failed to send wakeup: {e:?}"));
+    }
 
-	fn add(ev: EpollFlags, res: &mut HashMap<Kh, ProtoEvent>, vec: &Vec<Kh>, e_flag: EpollFlags,
-	       mut p_flag: nix::libc::c_short)
-	{
-	    if ev.contains(EpollFlags::EPOLLERR) {
-		p_flag |= nix::libc::POLLERR;
-	    } else if ev.contains(EpollFlags::EPOLLHUP) {
-		p_flag |= nix::libc::POLLHUP;
-	    } else if !ev.contains(e_flag) {
-		return;
-	    }
+    pub fn send_events(&self, seq: Sequence, ev: PollFlags) {
+	let _ = proto::Response::send_poll(&self.device.conn, seq, ev.bits() as ProtoEvent)
+	    .map_err(|e| error!("failed to send wakeup: {e:?}"));
+    }
 
-	    for kh in vec {
-		match res.entry(*kh) {
-		    Entry::Occupied(mut e)	=> *(e.get_mut()) |= p_flag as ProtoEvent,
-		    Entry::Vacant(v)		=> {
-			v.insert(p_flag as ProtoEvent);
-		    }
-		}
-	    }
-	}
+    fn send_err(&self, seq: Sequence, rc: nix::Error) {
+	let _ = proto::Response::send_err(&self.device.conn, seq, rc)
+	    .map_err(|e| error!("failed to send err -{rc} response: {e:?}"));
+    }
 
-	add(ev, &mut res, &self.kh_in,  EpollFlags::EPOLLIN,  nix::libc::POLLIN);
-	add(ev, &mut res, &self.kh_out, EpollFlags::EPOLLOUT, nix::libc::POLLOUT);
-	add(ev, &mut res, &self.kh_pri, EpollFlags::EPOLLPRI, nix::libc::POLLPRI);
+    pub fn register_kh(&mut self, kh: Kh, ev: PollFlags) {
 
-	for (kh, ev) in res {
+	if ev.is_empty() {
+	    self.khs.remove(&kh);
+	} else {
+	    let ev = poll_to_epoll(ev);
+
+	    self.khs.insert(kh, ev);
 	}
     }
 
-    pub fn get_events(&self) -> Option<EpollFlags> {
-	fn chk(vec: &Vec<u64>, flag: EpollFlags) -> EpollFlags {
-	    match vec.is_empty() {
-		true	=> EpollFlags::empty(),
-		false	=> flag,
-	    }
+    pub fn poll(&self, req: (Sequence, ProtoEvent)) -> nix::Result<()> {
+	let fd_ser = self.device.fd.as_raw_fd();
+	let mut pfd = [
+	    PollFd::new(fd_ser, proto_to_poll(req.1))
+	];
+
+	match nix::poll::poll(&mut pfd, 0) {
+	    Ok(0)	=> self.send_events(req.0, PollFlags::empty()),
+	    Ok(1)	=> self.send_events(req.0, pfd[0].revents().unwrap_or(PollFlags::empty())),
+	    Ok(_)	=> panic!("unexpected value from poll()"),
+	    Err(e)	=> return Err(e),
 	}
 
-	let ev =
-	    chk(&self.kh_in,  EpollFlags::EPOLLIN) |
-	    chk(&self.kh_pri, EpollFlags::EPOLLPRI) |
-	    chk(&self.kh_out, EpollFlags::EPOLLOUT);
-
-	match ev.is_empty() {
-	    true	=> None,
-	    false	=> Some(ev)
-	}
+	Ok(())
     }
+
 }
 
 pub struct Poll<'a>(RwLock<PollInner<'a>>);
@@ -114,6 +135,24 @@ impl Poll<'_> {
 	self.0.read().fd_tx.is_some()
     }
 
+    pub fn poll(&self, req: (Sequence, Kh, ProtoEvent)) {
+	let mut this = self.0.write();
+
+	match this.poll((req.0, req.2)) {
+	    Ok(_)	=> this.register_kh(req.1, proto_to_poll(req.2)),
+	    Err(e)	=> this.send_err(req.0, e),
+	}
+    }
+
+    pub fn poll_once(&self, req: (Sequence, ProtoEvent)) {
+	let this = self.0.read();
+
+	match this.poll(req) {
+	    Ok(_)	=> {},
+	    Err(e)	=> this.send_err(req.0, e),
+	}
+    }
+
     // TODO: move to super::
     fn consume_sync(&self, fd: RawFd) {
 	#[allow(invalid_value)]
@@ -126,9 +165,7 @@ impl Poll<'_> {
 	    Ok(c)	=> warn!("unexpected number {c} of chars received"),
 	    Err(e)	=> warn!("sync rx failed: {e:?}"),
 	}
-
     }
-
 
     pub fn run(&self) -> crate::Result<()> {
 	let fd_ser = self.0.read().device.fd.as_raw_fd();

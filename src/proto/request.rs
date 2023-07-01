@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::io::IoSlice;
 use std::os::fd::AsFd;
 
-use ensc_cuse_ffi::{WriteParams, ReadParams};
+use ensc_cuse_ffi::{WriteParams, ReadParams, PollParams};
 use ensc_ioctl_ffi::ffi::ioctl;
 
 use super::ioctl::Arg;
@@ -21,6 +21,7 @@ pub enum RequestCode {
     Write = 3,
     Read = 4,
     Ioctl = 5,
+    Poll = 6,
 }
 
 impl RequestCode {
@@ -35,6 +36,7 @@ impl RequestCode {
 	    3	=> Self::Write,
 	    4	=> Self::Read,
 	    5	=> Self::Ioctl,
+	    6	=> Self::Poll,
 	    _	=> return None,
 	})
     }
@@ -47,6 +49,7 @@ pub enum Request<'a> {
     Write(Sequence, Write, &'a[u8]),
     Read(Sequence, Read),
     Ioctl(Sequence, Ioctl, Arg),
+    Poll(Sequence, Poll),
 }
 
 fn sub_slice(buf: &mut [MaybeUninit<u8>], sz: usize) -> MaybeUninit<&mut [u8]> {
@@ -99,6 +102,10 @@ impl <'a> Request<'a> {
 		let arg = Arg::from_raw(ioinfo.arg_type.into(), arg)?;
 
 		Self::Ioctl(seq, ioinfo, arg)
+	    }
+	    RequestCode::Poll		=> {
+		let pollinfo = recv_to(&r, Poll::uninit(), &mut rx_len)?;
+		Self::Poll(seq, pollinfo)
 	    }
 	};
 
@@ -299,6 +306,40 @@ impl Request<'_> {
 	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
 				IoSlice::new(info.as_repr_bytes()),
 				IoSlice::new(data) ])?;
+
+	Ok(seq)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct Poll {
+    pub kh:		be64,
+    pub flags:		be32,
+    pub events:		be32,
+}
+
+unsafe impl AsReprBytes for Poll {}
+unsafe impl AsReprBytesMut for Poll {}
+
+impl Poll {
+    pub const FLAG_SCHEDULE_NOTIFY: u32 = 1 << 0;
+}
+
+impl Request<'_> {
+    //#[instrument(level="trace", skip(w), ret)]
+    pub fn send_poll<W: AsFd + std::io::Write>(w: W, parm: PollParams) -> Result<Sequence> {
+	let info = Poll {
+	    kh:		parm.kh.into(),
+	    flags:	parm.flags.as_ffi().into(),
+	    events:	parm.events.as_ffi().into(),
+	};
+
+	let hdr = Header::new(RequestCode::Poll, &info);
+	let seq = hdr.seq()?;
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(info.as_repr_bytes()) ])?;
 
 	Ok(seq)
     }

@@ -129,6 +129,9 @@ fn main() -> Result<()> {
 		    devices.for_fh(args.fh, |dev| dev.ioctl(info, args, data));
 		}
 	    }
+	    OpIn::FusePoll(params)	=>
+		devices.for_fh(params.fh, |dev| dev.poll(info, params)),
+
 
 	    op	=> {
 		warn!("unimplemented op {op:?}");
