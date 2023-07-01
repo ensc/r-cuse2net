@@ -3,8 +3,8 @@ mod errors;
 mod io;
 mod asrepr;
 mod rawbuffer;
-mod request;
-mod response;
+pub mod request;
+pub mod response;
 pub mod ioctl;
 
 use std::{time::Duration, os::fd::AsFd};
@@ -29,7 +29,7 @@ pub use response::Response;
 pub struct Sequence(u64);
 
 impl Sequence {
-    pub fn send_err<W: AsFd + std::io::Write>(self, w: W, err: i32) -> Result<()> {
+    pub fn send_err<W: AsFd + std::io::Write>(self, w: W, err: nix::Error) -> Result<()> {
 	Response::send_err(w, self, err)
     }
 

@@ -1,10 +1,14 @@
 #![allow(unused_variables)]
 //
 
+mod read;
+mod poll;
+
 use std::mem::MaybeUninit;
 use std::os::fd::{OwnedFd, FromRawFd, AsRawFd};
 use std::path::Path;
 use std::net::TcpStream;
+use std::thread::scope;
 
 use crate::proto::ioctl::Arg;
 use crate::proto::{self, Sequence};
@@ -12,10 +16,14 @@ use crate::proto::{self, Sequence};
 pub struct Device {
     fd:		OwnedFd,
     conn:	TcpStream,
-    flags:	u32,
+    fh_flags:	u32,
 }
 
 impl Device {
+    fn is_nonblock(flags: u32) -> bool {
+	(flags & (nix::libc::O_NONBLOCK as u32)) != 0
+    }
+
     pub fn open<P: AsRef<Path>>(p: P, seq: Sequence, flags: u32, conn: TcpStream) -> crate::Result<Self> {
 	use nix::fcntl::OFlag;
 	use nix::sys::stat::Mode;
@@ -31,7 +39,7 @@ impl Device {
 	    Ok(fd)	=> unsafe { OwnedFd::from_raw_fd(fd) },
 	    Err(e)	=> {
 		error!("failed to open {p:?}: {e:?}");
-		proto::Response::send_err(&conn, seq, e as i32)?;
+		proto::Response::send_err(&conn, seq, e)?;
 		return Err(e.into());
 	    }
 	};
@@ -41,11 +49,25 @@ impl Device {
 	Ok(Self {
 	    fd:		fd,
 	    conn:	conn,
-	    flags:	flags,
+	    fh_flags:	flags,
 	})
     }
 
     pub fn run(self) -> crate::Result<()> {
+	debug!("running device");
+
+	let read = read::Read::new(&self)?;
+
+	scope(|s| {
+	    std::thread::Builder::new()
+		.name("read".to_string())
+		.spawn_scoped(s, || read.run())?;
+
+	    self.main(&read)
+	})
+    }
+
+    fn main(&self, read: &read::Read) -> crate::Result<()> {
 	debug!("running device");
 
 	let mut buf: [MaybeUninit<u8>; proto::MAX_MSG_SIZE] = [MaybeUninit::uninit(); proto::MAX_MSG_SIZE];
@@ -58,7 +80,7 @@ impl Device {
 	    match op {
 		proto::Request::Open(_, seq) => {
 		    warn!("can not open an already opened device");
-		    seq.send_err(&self.conn, nix::libc::EINVAL)?;
+		    seq.send_err(&self.conn, nix::Error::EINVAL)?;
 		}
 
 		proto::Request::Release(seq) => {
@@ -67,7 +89,11 @@ impl Device {
 		}
 
 		proto::Request::Write(seq, wrinfo, data)	=> {
-		    self.write(seq, wrinfo.offset.into(), data)?;
+		    self.write(seq, wrinfo, data)?;
+		}
+
+		proto::Request::Read(seq, rdinfo)	=> {
+		    self.read(read, seq, rdinfo)?;
 		}
 
 		proto::Request::Ioctl(seq, ioinfo, arg)	=> {
@@ -77,20 +103,35 @@ impl Device {
 	}
     }
 
-    fn write(&self, seq: Sequence, offset: u64, data: &[u8]) -> crate::Result<()> {
-	trace!("write#{seq:?}@{offset}: {data:?}");
+    fn read(&self, read: &read::Read, seq: Sequence, rdinfo: proto::request::Read)
+	    -> crate::Result<()>
+    {
+	trace!("read#{seq:?}@{rdinfo:?}");
+
+	let req = (seq, rdinfo.size.as_native() as usize);
+
+	match Self::is_nonblock(rdinfo.fh_flags.into()) {
+	    true	=> read.read_nonblock(req),
+	    false	=> read.push_request(req),
+	}
+
+	Ok(())
+    }
+
+    fn write(&self, seq: Sequence, wrinfo: proto::request::Write, data: &[u8]) -> crate::Result<()> {
+	trace!("write#{seq:?}@{wrinfo:?}: {data:?}");
 
 	// TODO: use only write() and required that 'offset' is zero?  write()
 	// and pwrite() have different semantics regarding file position after
 	// the call
-	let l = match offset {
+	let l = match wrinfo.offset.into() {
 	    0		=> nix::unistd::write(self.fd.as_raw_fd(), data),
 	    offs	=> nix::sys::uio::pwrite(self.fd.as_raw_fd(), data, offs as nix::libc::off_t),
 	};
 
 	match l {
 	    Ok(l)	=> proto::Response::send_write(&self.conn, seq, l as u32),
-	    Err(e)	=> proto::Response::send_err(&self.conn, seq, e as i32),
+	    Err(e)	=> proto::Response::send_err(&self.conn, seq, e),
 	}?;
 
 	Ok(())

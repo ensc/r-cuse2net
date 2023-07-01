@@ -134,9 +134,14 @@ pub struct OpInInfo {
 }
 
 impl OpInInfo {
-    pub fn send_error<W: AsFd>(&self, w: &CuseDevice<W>, rc: u32) -> Result<(), Error>
+    pub fn send_ok<W: AsFd>(&self, w: &CuseDevice<W>) -> Result<(), Error>
     {
-	w.send_error(self.unique, rc)
+	self.send_error(w, nix::Error::from_i32(0))
+    }
+
+    pub fn send_error<W: AsFd>(&self, w: &CuseDevice<W>, rc: nix::Error) -> Result<(), Error>
+    {
+	w.send_error(self.unique, rc as u32)
     }
 
     pub fn send_response<W: AsFd>(&self, w: &CuseDevice<W>, data: &[&[u8]]) -> Result<(), Error>
@@ -159,6 +164,20 @@ impl From<&ffi::fuse_in_header> for OpInInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct ReleaseParams {
+    pub fh:		u64,
+    pub flags:		ffi::fh_flags,
+    pub release_flags:	ffi::release_flags,
+    pub lock_owner:	u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenParams {
+    pub flags:		ffi::fh_flags,
+    pub open_flags:	ffi::open_in_flags,
+}
+
+#[derive(Debug, Clone)]
 pub struct IoctlParams {
     pub fh:		u64,
     pub flags:		ffi::ioctl_flags,
@@ -166,6 +185,15 @@ pub struct IoctlParams {
     pub arg:		u64,
     pub in_size:	u32,
     pub out_size:	u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct WriteParams {
+    pub fh:		u64,
+    pub offset:		u64,
+    pub flags:		ffi::fh_flags,
+    pub write_flags:	ffi::write_flags,
+    pub lock_owner:	u64,
 }
 
 #[derive(Debug, Clone)]
@@ -190,10 +218,9 @@ pub struct PollParams {
 pub enum OpIn<'a> {
     Unknown,
     CuseInit{ version: KernelVersion, flags: ffi::cuse_flags },
-    FuseOpen{ flags: ffi::fh_flags, open_flags: ffi::open_in_flags },
-    FuseRelease { fh: u64, flags: ffi::fh_flags, release_flags: ffi::release_flags, lock_owner: u64 },
-    FuseWrite{ fh: u64, offset: u64, write_flags: ffi::write_flags,
-	       lock_owner: u64, flags: ffi::fh_flags, data: &'a[u8] },
+    FuseOpen(OpenParams),
+    FuseRelease(ReleaseParams),
+    FuseWrite(WriteParams, &'a[u8]),
     FuseRead(ReadParams),
     FuseIoctl(IoctlParams, &'a [u8]),
     FusePoll(PollParams),
@@ -222,35 +249,34 @@ impl <'a> OpIn<'a> {
 	    ffi::fuse_opcode::FUSE_OPEN		=> {
 		let opdata: &ffi::fuse_open_in = iter.next()?.ok_or(Error::Eof)?;
 
-		Self::FuseOpen {
+		Self::FuseOpen(OpenParams {
 		    flags:	opdata.flags,
 		    open_flags:	opdata.open_flags
-		}
+		})
 	    },
 
 	    ffi::fuse_opcode::FUSE_RELEASE	=> {
 		let opdata: &ffi::fuse_release_in = iter.next()?.ok_or(Error::Eof)?;
 
-		Self::FuseRelease {
+		Self::FuseRelease(ReleaseParams {
 		    fh:			opdata.fh,
 		    flags:		opdata.flags,
 		    release_flags:	opdata.release_flags,
 		    lock_owner:		opdata.lock_owner,
-		}
+		})
 	    }
 
 	    ffi::fuse_opcode::FUSE_WRITE	=> {
 		let opdata: &ffi::fuse_write_in = iter.next()?.ok_or(Error::Eof)?;
 		let wdata: &[u8] = iter.next_slice(opdata.size as usize)?.ok_or(Error::Eof)?;
 
-		Self::FuseWrite {
+		Self::FuseWrite(WriteParams {
 		    fh:			opdata.fh,
 		    offset:		opdata.offset,
 		    write_flags:	opdata.write_flags,
 		    lock_owner:		opdata.lock_owner,
 		    flags:		opdata.flags,
-		    data:		wdata,
-		}
+		}, wdata)
 	    }
 
 	    ffi::fuse_opcode::FUSE_READ	=> {

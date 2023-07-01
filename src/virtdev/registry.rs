@@ -2,10 +2,9 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use ensc_cuse_ffi::{OpInInfo};
+use ensc_cuse_ffi::{OpInInfo, OpenParams};
 use ensc_cuse_ffi::AsBytes;
 
-use ensc_cuse_ffi::ffi::{open_in_flags, fh_flags};
 use parking_lot::RwLock;
 
 use crate::error::Error;
@@ -107,8 +106,7 @@ impl DeviceRegistry {
 	}
     }
 
-    pub fn create(&self, addr: SocketAddr, op_info: OpInInfo, flags: fh_flags, open_in_flags: open_in_flags)
-		  -> Result<(), Error>
+    pub fn create(&self, addr: SocketAddr, op_info: OpInInfo, params: OpenParams) -> Result<(), Error>
     {
 	let registry = self.clone();
 
@@ -129,14 +127,14 @@ impl DeviceRegistry {
 		    addr:		addr,
 		    cuse:		cuse.clone(),
 		    fuse_hdl:		dev_hdl,
-		    flags:		flags,
+		    flags:		params.flags,
 		};
 
 		match Device::open(args) {
 		    Ok(dev)		=> {
 			let hdr = ensc_cuse_ffi::ffi::fuse_open_out {
 			    fh:		dev_hdl,
-			    open_flags:	open_in_flags,
+			    open_flags:	params.open_flags,
 			    _padding:	Default::default(),
 			};
 
@@ -154,7 +152,7 @@ impl DeviceRegistry {
 
 			drop(mngd_hdl);
 
-			let _ = op_info.send_error(&cuse, nix::libc::EIO as u32);
+			let _ = op_info.send_error(&cuse, nix::Error::EIO);
 
 			Err(e)
 		    }

@@ -112,22 +112,17 @@ fn main() -> Result<()> {
 		is_init = false;
 	    },
 
-	    OpIn::FuseOpen { flags, open_flags }	=>
-		devices.create(addr, info, flags, open_flags)?,
+	    OpIn::FuseOpen(params)			=>
+		devices.create(addr, info, params)?,
 
-	    OpIn::FuseRelease { fh, .. }		=>
-		devices.release(fh, info),
+	    OpIn::FuseRelease(params)		=>
+		devices.release(params.fh, info),
 
-	    OpIn::FuseWrite { fh, offset, write_flags, lock_owner: _, flags, data } => {
-		let write_info = virtdev::device::WriteInfo {
-		    offset:		offset,
-		    write_flags:	write_flags,
-		    flags:		flags,
-		    data:		data.into(),
-		};
+	    OpIn::FuseWrite(params, data) =>
+		devices.for_fh(params.fh, |dev| dev.write(info, params, data)),
 
-		devices.for_fh(fh, |dev| dev.write(info, write_info));
-	    }
+	    OpIn::FuseRead(params) =>
+		devices.for_fh(params.fh, |dev| dev.read(info, params)),
 
 	    OpIn::FuseIoctl(args, data)	=> {
 		if virtdev::ioctl::cuse_complete_ioctl(f, info.unique, &args, data)? {
@@ -137,7 +132,7 @@ fn main() -> Result<()> {
 
 	    op	=> {
 		warn!("unimplemented op {op:?}");
-		let _ = info.send_error(f, nix::libc::ENOSYS as u32);
+		let _ = info.send_error(f, nix::Error::ENOSYS);
 	    }
 	}
     }

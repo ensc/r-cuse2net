@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 use parking_lot::{Condvar, RwLock, Mutex};
 
 use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags, fh_flags};
-use ensc_cuse_ffi::{IoctlParams, OpInInfo};
+use ensc_cuse_ffi::{IoctlParams, OpInInfo, WriteParams, ReadParams};
 
 use ensc_ioctl_ffi::{ffi as ioctl_ffi};
 use ioctl_ffi::ioctl;
@@ -21,24 +21,18 @@ use crate::{CuseFileDevice, Error, proto};
 use super::CONNECT_TIMEOUT;
 
 #[derive(Clone, Debug)]
-pub struct WriteInfo {
-    pub offset:		u64,
-    pub write_flags:	cuse_ffi::write_flags,
-    pub flags:		cuse_ffi::fh_flags,
-    pub data:		Vec<u8>,
-}
-
-#[derive(Clone, Debug)]
 enum Request {
     Release,
     Write,
+    Read,
     Ioctl(ioctl),
 }
 
 #[derive(Clone, Debug)]
 enum Pending {
     Release,
-    Write(Box<WriteInfo>),
+    Write(WriteParams, Vec<u8>),
+    Read(ReadParams),
     Ioctl{cmd: ioctl, arg: Arg},
 }
 
@@ -75,18 +69,10 @@ impl DeviceInner {
 	self.state.write().requests.remove(&seq)
     }
 
-    fn handle_ioctl(&self, info: OpInInfo, cmd: ioctl, resp: proto::Response) -> crate::Result<()> {
+    fn handle_ioctl(&self, info: OpInInfo, cmd: ioctl, retval: u64, arg: Arg) -> crate::Result<()> {
 	use ensc_cuse_ffi::AsBytes;
 
-	let (retval, arg) = match resp {
-	    proto::Response::Ioctl(retval, arg)	=> (retval, arg),
-	    r				=> {
-		warn!("unexpected response {r:?}");
-		return Err(proto::Error::BadResponse.into());
-	    }
-	};
-
-	debug!("IOCTL: {cmd:?}, {arg:?}");
+	debug!("IOCTL: {cmd:?}, {retval:?}, {arg:?}");
 
 	let data = arg.cuse_response(cmd)?;
 
@@ -120,6 +106,7 @@ impl DeviceInner {
     //#[instrument(level="trace", skip(self), ret)]
     fn handle_response(&self, seq: Sequence, resp: proto::Response) -> crate::Result<()> {
 	use ensc_cuse_ffi::AsBytes;
+	use proto::Response as R;
 
 	debug!("got response for seq {seq:?}");
 
@@ -132,21 +119,18 @@ impl DeviceInner {
 	    Some(req)	=> req
 	};
 
-	match req {
-	    Request::Release	=> {
+	if let proto::Response::Err(err) = &resp {
+	    info.send_error(&self.cuse, *err)?;
+	    return Ok(());
+	}
+
+	match (req, resp) {
+	    (Request::Release, R::Ok)		=> {
 		self.state.write().closed = true;
-		info.send_error(&self.cuse, 0)?;
+		info.send_ok(&self.cuse)?;
 	    }
 
-	    Request::Write	=> {
-		let sz = match resp {
-		    proto::Response::Write(sz) => sz,
-		    r				=> {
-			warn!("unexpected response {r:?}");
-			return Err(proto::Error::BadResponse.into());
-		    }
-		};
-
+	    (Request::Write, R::Write(sz))	=> {
 		let write_resp = cuse_ffi::fuse_write_out {
 		    size:	sz,
 		    _padding:	0
@@ -155,7 +139,16 @@ impl DeviceInner {
 		info.send_response(&self.cuse, &[ write_resp.as_bytes() ])?;
 	    }
 
-	    Request::Ioctl(cmd)		=> self.handle_ioctl(info, cmd, resp)?,
+	    (Request::Read, R::Read(data))	=>
+		info.send_response(&self.cuse, &[ &data ])?,
+
+	    (Request::Ioctl(cmd), R::Ioctl(retval, arg)) =>
+		self.handle_ioctl(info, cmd, retval, arg)?,
+
+	    (req, resp)				=> {
+		warn!("unexpected response {resp:?} for {req:?}");
+		return Err(proto::Error::BadResponse.into());
+	    }
 	}
 
 	Ok(())
@@ -203,9 +196,13 @@ impl DeviceInner {
 		    .map(|seq| (seq, Request::Release))
 	    },
 
-	    Pending::Write(wrinfo)	=>
-		proto::Request::send_write(&self.conn, wrinfo.offset, &wrinfo.data)
+	    Pending::Write(wrinfo, data)	=>
+		proto::Request::send_write(&self.conn, wrinfo, &data)
 		.map(|seq| (seq, Request::Write)),
+
+	    Pending::Read(rdinfo)	=>
+		proto::Request::send_read(&self.conn, rdinfo)
+		.map(|seq| (seq, Request::Read)),
 
 	    Pending::Ioctl { cmd, arg }	=>
 		proto::Request::send_ioctl(&self.conn, cmd, arg)
@@ -236,7 +233,7 @@ impl DeviceInner {
 		    Ok(_)		=> {},
 		    Err((info, e))	=> {
 			warn!("failed to handle request: {e:?}");
-			let _ = info.send_error(&self.cuse, nix::libc::EIO as u32);
+			let _ = info.send_error(&self.cuse, nix::Error::EIO);
 		    }
 		}
 	    }
@@ -361,10 +358,14 @@ impl Device {
 	self.0.state_change.notify_all();
     }
 
-    pub fn write(&self, info: OpInInfo, write_info: WriteInfo)
+    pub fn write(&self, info: OpInInfo, params: WriteParams, data: &[u8])
     {
-	self.0.state.write().pending.push_back((Pending::Write(Box::new(write_info)), info));
+	self.0.state.write().pending.push_back((Pending::Write(params, data.into()), info));
 	self.0.state_change.notify_all();
+    }
+
+    pub fn read(&self, info: OpInInfo, params: ReadParams)
+    {
     }
 
     pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])
@@ -372,7 +373,7 @@ impl Device {
 	let arg = match Arg::decode(params.cmd, params.arg, data, proto::ioctl::Source::Cuse) {
 	    Err(e)	=> {
 		error!("failed to decode ioctl: {e:?}");
-		info.send_error(&self.0.cuse, nix::libc::EINVAL as u32)
+		info.send_error(&self.0.cuse, nix::Error::EINVAL)
 		    .unwrap_or_else(|e| error!("failed to send error response: {e:?}"));
 		return;
 	    },

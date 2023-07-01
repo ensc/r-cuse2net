@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::io::IoSlice;
 use std::os::fd::AsFd;
 
+use ensc_cuse_ffi::{WriteParams, ReadParams};
 use ensc_ioctl_ffi::ffi::ioctl;
 
 use super::ioctl::Arg;
@@ -18,7 +19,8 @@ pub enum RequestCode {
     Open = 1,
     Release = 2,
     Write = 3,
-    Ioctl = 4,
+    Read = 4,
+    Ioctl = 5,
 }
 
 impl RequestCode {
@@ -31,7 +33,8 @@ impl RequestCode {
 	    1	=> Self::Open,
 	    2	=> Self::Release,
 	    3	=> Self::Write,
-	    4	=> Self::Ioctl,
+	    4	=> Self::Read,
+	    5	=> Self::Ioctl,
 	    _	=> return None,
 	})
     }
@@ -42,6 +45,7 @@ pub enum Request<'a> {
     Open(Open, Sequence),
     Release(Sequence),
     Write(Sequence, Write, &'a[u8]),
+    Read(Sequence, Read),
     Ioctl(Sequence, Ioctl, Arg),
 }
 
@@ -83,6 +87,10 @@ impl <'a> Request<'a> {
 		let rxbuf = sub_slice(tmp_buf, *rx_len.as_ref().unwrap());
 
 		Self::Write(seq, wrinfo, recv_to(&r, rxbuf, &mut rx_len)?)
+	    }
+	    RequestCode::Read		=> {
+		let rdinfo = recv_to(&r, Read::uninit(), &mut rx_len)?;
+		Self::Read(seq, rdinfo)
 	    }
 	    RequestCode::Ioctl		=> {
 		let ioinfo = recv_to(&r, Ioctl::uninit(), &mut rx_len)?;
@@ -205,7 +213,9 @@ impl Request<'_> {
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct Write {
-    pub offset:	be64,
+    pub offset:		be64,
+    pub fh_flags:	be32,
+    _pad:		[be8;4],
 }
 
 unsafe impl AsReprBytes for Write {}
@@ -213,9 +223,11 @@ unsafe impl AsReprBytesMut for Write {}
 
 impl Request<'_> {
     //#[instrument(level="trace", skip(w), ret)]
-    pub fn send_write<W: AsFd + std::io::Write>(w: W, offset: u64, data: &[u8]) -> Result<Sequence> {
+    pub fn send_write<W: AsFd + std::io::Write>(w: W, wrinfo: WriteParams, data: &[u8]) -> Result<Sequence> {
 	let info = Write {
-	    offset:	offset.into(),
+	    offset:	wrinfo.offset.into(),
+	    fh_flags:	wrinfo.flags.as_ffi().into(),
+	    _pad:	Default::default(),
 	};
 
 	let hdr = Header::with_payload(RequestCode::Write, &info, data);
@@ -224,6 +236,36 @@ impl Request<'_> {
 	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
 				IoSlice::new(info.as_repr_bytes()),
 				IoSlice::new(data) ])?;
+
+	Ok(seq)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct Read {
+    pub offset:		be64,
+    pub size:		be32,
+    pub fh_flags:	be32,
+}
+
+unsafe impl AsReprBytes for Read {}
+unsafe impl AsReprBytesMut for Read {}
+
+impl Request<'_> {
+    //#[instrument(level="trace", skip(w), ret)]
+    pub fn send_read<W: AsFd + std::io::Write>(w: W, rdinfo: ReadParams) -> Result<Sequence> {
+	let info = Read {
+	    offset:	rdinfo.offset.into(),
+	    size:	rdinfo.size.into(),
+	    fh_flags:	rdinfo.flags.as_ffi().into(),
+	};
+
+	let hdr = Header::new(RequestCode::Read, &info);
+	let seq = hdr.seq()?;
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(info.as_repr_bytes()) ])?;
 
 	Ok(seq)
     }

@@ -8,12 +8,18 @@ use super::ioctl::Arg;
 use super::{Sequence, Result, AsReprBytes, AsReprBytesMut, TIMEOUT_READ, Error};
 use super::endian::*;
 
+pub type PollEvent = u32;
+
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ResponseCode {
     Result = 1,
     Write = 2,
-    Ioctl = 3,
+    Read = 3,
+    Ioctl = 4,
+    Poll = 5,
+    PollWakeup = 6,
+    PollWakeup1 = 7,
 }
 
 impl ResponseCode {
@@ -25,26 +31,40 @@ impl ResponseCode {
 	Some(match v {
 	    1	=> Self::Result,
 	    2	=> Self::Write,
-	    3	=> Self::Ioctl,
+	    3	=> Self::Read,
+	    4	=> Self::Ioctl,
+	    5	=> Self::Poll,
+	    6	=> Self::PollWakeup,
+	    7	=> Self::PollWakeup1,
+
 	    _	=> return None,
 	})
     }
 }
 
-struct Alloc {
-    buf: Vec<u8>,
+struct Alloc<T = u8> {
+    buf: Vec<T>,
 }
 
-impl Alloc {
+impl <T> Alloc<T> {
     pub fn new(sz: usize) -> Self {
 	Self {
 	    buf: Vec::with_capacity(sz)
 	}
     }
 
-    pub fn as_uninit(&mut self) -> MaybeUninit<&mut [u8]> {
+    pub fn as_uninit(&mut self) -> MaybeUninit<&mut [T]> {
 	let slice = unsafe {
 	    core::slice::from_raw_parts_mut(self.buf.as_mut_ptr(), self.buf.capacity())
+	};
+
+	MaybeUninit::new(slice)
+    }
+
+    pub fn as_uninit_bytes(&mut self) -> MaybeUninit<&mut [u8]> {
+	let slice = unsafe {
+	    core::slice::from_raw_parts_mut(self.buf.as_mut_ptr() as * mut u8,
+					    self.buf.capacity() * core::mem::size_of::<T>())
 	};
 
 	MaybeUninit::new(slice)
@@ -54,12 +74,91 @@ impl Alloc {
 #[derive(Debug)]
 pub enum Response {
     Ok,
+    Err(nix::Error),
     Write(u32),
+    Read(Vec<u8>),
     Ioctl(u64, Arg),
+    Poll(u32),
+    PollWakeup(Vec<u64>),
+    PollWakeup1(u64),
 }
 
 impl Response {
     const MAX_SZ: usize = 0x1_0000;
+
+    pub fn send_poll<W: AsFd + std::io::Write>(w: W, seq: Sequence, ev: u32) -> Result<()> {
+	let ev: be32 = ev.into();
+	let ev = ev.as_repr_bytes();
+
+	let hdr = Header {
+	    op:		ResponseCode::Poll.as_u8().into(),
+	    err:	0.into(),
+	    len:	(ev.len() as u32).into(),
+	    seq:	seq.0.into(),
+	    ..Default::default()
+	};
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(ev) ])?;
+
+	Ok(())
+    }
+
+    fn send_poll_wakeup1<W: AsFd + std::io::Write>(w: W, kh: u64) -> Result<()> {
+	let kh: be64 = kh.into();
+	let kh = kh.as_repr_bytes();
+	let hdr = Header {
+	    op:		ResponseCode::PollWakeup1.as_u8().into(),
+	    err:	0.into(),
+	    len:	(kh.len() as u32).into(),
+	    seq:	0.into(),
+	    ..Default::default()
+	};
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(kh) ])?;
+
+	Ok(())
+    }
+
+    pub fn send_poll_wakeup<W: AsFd + std::io::Write>(w: W, kh: &[u64]) -> Result<()> {
+	if kh.len() == 1 {
+	    return Self::send_poll_wakeup1(w, kh[0]);
+	}
+
+	let kh: Vec<be64> = kh.iter().map(|h| be64::from(*h)).collect();
+	let kh: &[u8] = unsafe {
+	    core::slice::from_raw_parts(kh.as_ptr() as * const u8, kh.len() * 8)
+	};
+
+	let hdr = Header {
+	    op:		ResponseCode::PollWakeup.as_u8().into(),
+	    err:	0.into(),
+	    len:	(kh.len() as u32).into(),
+	    seq:	0.into(),
+	    ..Default::default()
+	};
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(kh) ])?;
+
+	Ok(())
+    }
+
+    pub fn send_read<W: AsFd + std::io::Write>(w: W, seq: Sequence, data: &[u8]) -> Result<()> {
+	let hdr = Header {
+	    op:		ResponseCode::Read.as_u8().into(),
+	    err:	0.into(),
+	    len:	(data.len() as u32).into(),
+	    seq:	seq.0.into(),
+	    ..Default::default()
+	};
+
+	send_vectored_all(w, &[ IoSlice::new(hdr.as_repr_bytes()),
+				IoSlice::new(data) ])?;
+
+	Ok(())
+    }
 
     //#[instrument(level="trace", skip(w))]
     pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, seq: Sequence, rc: u64, arg: Arg) -> Result<()> {
@@ -106,7 +205,7 @@ impl Response {
 
 
     //#[instrument(level="trace", skip(w))]
-    pub fn send_err<W: AsFd + std::io::Write>(w: W, seq: Sequence, err: i32) -> Result<()> {
+    pub fn send_err<W: AsFd + std::io::Write>(w: W, seq: Sequence, err: nix::Error) -> Result<()> {
 	let hdr = Header {
 	    op:		ResponseCode::Result.as_u8().into(),
 	    err:	(err as u16).into(),
@@ -163,6 +262,13 @@ impl Response {
 	    ResponseCode::Write				=>
 		Self::Write(recv_to(&r, be32::uninit(), &mut rx_len)?.into()),
 
+	    ResponseCode::Read				=> {
+		let mut tmp = Alloc::new(*rx_len.as_ref().unwrap());
+		let arg = recv_to(&r, tmp.as_uninit(), &mut rx_len)?;
+
+		Self::Read(arg.into())
+	    },
+
 	    ResponseCode::Ioctl				=> {
 		let ioctl = recv_to(&r, Ioctl::uninit(), &mut rx_len)?;
 		let mut tmp = Alloc::new(*rx_len.as_ref().unwrap());
@@ -171,6 +277,39 @@ impl Response {
 
 		Self::Ioctl(ioctl.retval.into(), arg)
 	    },
+
+	    ResponseCode::Poll				=> {
+		let revent: PollEvent = recv_to(&r, be32::uninit(), &mut rx_len)?.into();
+
+		Self::Poll(revent.into())
+	    }
+
+	    ResponseCode::PollWakeup1			=> {
+		let kh: u64 = recv_to(&r, be64::uninit(), &mut rx_len)?.into();
+
+		Self::PollWakeup1(kh)
+	    }
+
+
+	    ResponseCode::PollWakeup			=> {
+		let len = *rx_len.as_ref().unwrap();
+		if len % core::mem::size_of::<u64>() != 0 {
+		    error!("len {len} not aligned");
+		    return Err(Error::BadLength);
+		}
+
+		let mut tmp = Alloc::<be64>::new(len / core::mem::size_of::<u64>());
+		let khs = recv_to(&r, tmp.as_uninit_bytes(), &mut rx_len)?;
+
+		let (head, khs, tail) = unsafe {
+		    khs.align_to::<be64>()
+		};
+
+		assert_eq!(head.len(), 0);
+		assert_eq!(tail.len(), 0);
+
+		Self::PollWakeup(khs.iter().map(|kh| (*kh).into()).collect())
+	    }
 
 	    ResponseCode::Result			=> {
 		warn!("bad response {hdr:?}");
