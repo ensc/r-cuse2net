@@ -215,6 +215,19 @@ impl fuse_opcode {
     pub const CUSE_INIT_BSWAP_RESERVED: Self = Self(1048576);
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct fuse_notify_code(i32);
+
+impl fuse_notify_code {
+    pub const FUSE_NOTIFY_POLL: Self = Self(1);
+
+    pub const fn as_native(self) -> i32 {
+	assert!(self.0 > 0);
+	self.0
+    }
+}
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_open_in {

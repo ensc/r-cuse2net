@@ -157,13 +157,37 @@ impl DeviceInner {
     }
 
     fn handle_event(&self, resp: proto::Response) -> crate::Result<()> {
+	use ensc_cuse_ffi::AsBytes;
 	use proto::Response as R;
 
 	match resp {
 	    R::PollWakeup(khs)	=> {
+		for kh in khs {
+		    let notify = cuse_ffi::fuse_notify_poll_wakeup_out {
+			kh:	kh
+		    };
 
+		    self.cuse.send_notify(cuse_ffi::fuse_notify_code::FUSE_NOTIFY_POLL,
+					  notify.as_bytes())?;
+		}
+	    }
+
+	    R::PollWakeup1(kh)	=> {
+		    let notify = cuse_ffi::fuse_notify_poll_wakeup_out {
+			kh:	kh
+		    };
+
+		    self.cuse.send_notify(cuse_ffi::fuse_notify_code::FUSE_NOTIFY_POLL,
+					  notify.as_bytes())?;
+	    }
+
+	    r			=> {
+		warn!("unexpected event {r:?}");
+		return Err(proto::Error::BadResponse.into());
 	    }
 	}
+
+	Ok(())
     }
 
     fn rx_thread(self: Arc<Self>) {
@@ -174,13 +198,16 @@ impl DeviceInner {
 	    debug!("rx: got {op:?}");
 
 	    match op {
-		Ok((Some(seq), resp))	=> {
+		Ok((Some(seq), resp))	=>
 		    if let Err(e) = self.handle_response(seq, resp) {
 			warn!("failed to process request: {e:?}");
 		    }
-		},
 
-		Ok((None, _))		=> warn!("no sequence received"),
+		Ok((None, ev))		=>
+		    if let Err(e) = self.handle_event(ev) {
+			warn!("failed to handle even: {e:?}");
+		    }
+
 		Err(e)			=> {
 		    warn!("error {e:?}");
 		    break;

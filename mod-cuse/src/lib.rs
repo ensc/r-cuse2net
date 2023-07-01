@@ -53,6 +53,19 @@ impl <F: AsFd> CuseDevice<F> {
 	Ok(())
     }
 
+    pub fn send_notify(&self, code: ffi::fuse_notify_code, data: &[u8]) -> Result<(), Error>
+    {
+	let len = core::mem::size_of::<ffi::fuse_out_header>() + data.len();
+	let hdr = ffi::fuse_out_header {
+	    len:	len as u32,
+	    error:	code.as_native(),
+	    unique:	0,
+	};
+
+	self.send(&[ IoSlice::new(hdr.as_bytes()),
+		     IoSlice::new(data) ], len)
+    }
+
     pub fn send_error(&self, unique: u64, rc: u32) -> Result<(), Error>
     {
 	let hdr = ffi::fuse_out_header {
@@ -105,6 +118,8 @@ impl AsBytes for ffi::fuse_open_out {}
 impl AsBytes for ffi::fuse_write_out {}
 impl AsBytes for ffi::fuse_ioctl_out {}
 impl AsBytes for ffi::fuse_ioctl_iovec {}
+impl AsBytes for ffi::fuse_notify_poll_wakeup_out {}
+impl AsBytes for ffi::fuse_poll_out {}
 impl AsBytes for ffi::cuse_init_out {}
 
 #[derive(Debug, Clone)]
