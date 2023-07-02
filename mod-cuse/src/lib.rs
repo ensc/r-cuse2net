@@ -3,6 +3,9 @@
 #[macro_use]
 extern crate tracing;
 
+#[macro_use]
+mod util;
+
 pub mod ffi;
 mod error;
 mod io;
