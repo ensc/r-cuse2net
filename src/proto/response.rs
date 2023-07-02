@@ -46,11 +46,34 @@ struct Alloc<T = u8> {
     buf: Vec<T>,
 }
 
-impl <T> Alloc<T> {
+impl <T: Sized> Alloc<T> {
+    const ELEM_SZ: usize = core::mem::size_of::<T>();
+
     pub fn new(sz: usize) -> Self {
 	Self {
 	    buf: Vec::with_capacity(sz)
 	}
+    }
+
+    pub fn alloc_bytes(sz: usize) -> super::Result<Self> {
+	//const ELEM_SZ: usize = Self::ELEM_SZ;
+	//const _: () = assert!(ELEM_SZ < 256);
+
+	#[allow(non_snake_case)]
+	let ELEM_SZ = Self::ELEM_SZ;
+	assert!(ELEM_SZ < 256);
+
+	match sz % ELEM_SZ {
+	    0	=> Ok(Self::new(sz / ELEM_SZ)),
+	    _	=> {
+		error!("unaligned len {sz} (% {ELEM_SZ}");
+		Err(super::Error::UnalignedLength(sz, ELEM_SZ as u8))
+	    }
+	}
+    }
+
+    pub fn into_inner(self) -> Vec<T> {
+	self.buf
     }
 
     pub fn as_uninit(&mut self) -> MaybeUninit<&mut [T]> {
@@ -61,13 +84,50 @@ impl <T> Alloc<T> {
 	MaybeUninit::new(slice)
     }
 
+    #[allow(dead_code)]
     pub fn as_uninit_bytes(&mut self) -> MaybeUninit<&mut [u8]> {
 	let slice = unsafe {
 	    core::slice::from_raw_parts_mut(self.buf.as_mut_ptr() as * mut u8,
-					    self.buf.capacity() * core::mem::size_of::<T>())
+					    self.buf.capacity() * Self::ELEM_SZ)
 	};
 
 	MaybeUninit::new(slice)
+    }
+}
+
+unsafe impl <T: AsReprBytes> AsReprBytes for Alloc<T> {
+    fn uninit() -> MaybeUninit<Self>
+    where
+	    Self: Sized
+    {
+	panic!("can not be called for Alloc");
+    }
+
+    fn as_repr_bytes(&self) -> &[u8] {
+	unsafe {
+	    core::slice::from_raw_parts(self.buf.as_ptr() as * const u8,
+					self.buf.capacity() * Self::ELEM_SZ)
+	}
+    }
+}
+
+unsafe impl <T: AsReprBytesMut> AsReprBytesMut for Alloc<T> {
+    fn as_repr_bytes_mut(&mut self) -> &mut [u8] {
+	unsafe {
+	    core::slice::from_raw_parts_mut(self.buf.as_mut_ptr() as * mut u8,
+					    self.buf.capacity() * Self::ELEM_SZ)
+	}
+    }
+
+    fn update_repr(&mut self, buf: &[u8]) {
+	debug_assert_eq!(self.buf.as_ptr() as * const _ as * const u8, buf.as_ptr());
+
+	assert!(buf.len() <= self.buf.capacity() * Self::ELEM_SZ);
+	assert_eq!(buf.len() % Self::ELEM_SZ, 0);
+
+	unsafe {
+	    self.buf.set_len(buf.len() / Self::ELEM_SZ);
+	}
     }
 }
 
@@ -170,7 +230,6 @@ impl Response {
 	Ok(())
     }
 
-    //#[instrument(level="trace", skip(w))]
     pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, seq: Sequence, rc: u64, arg: Arg) -> Result<()> {
 	trace!("send_ioctl({seq:?}, {rc}, {arg:?})");
 
@@ -198,7 +257,6 @@ impl Response {
 	Ok(())
     }
 
-    //#[instrument(level="trace", skip(w))]
     pub fn send_write<W: AsFd + std::io::Write>(w: W, seq: Sequence, size: u32) -> Result<()> {
 	trace!("send_write({seq:?}, {size})");
 
@@ -217,8 +275,6 @@ impl Response {
 	Ok(())
     }
 
-
-    //#[instrument(level="trace", skip(w))]
     pub fn send_err<W: AsFd + std::io::Write>(w: W, seq: Sequence, err: nix::Error) -> Result<()> {
 	trace!("send_err({seq:?}, {err})");
 
@@ -235,7 +291,6 @@ impl Response {
 	Ok(())
     }
 
-    //#[instrument(level="trace", skip(w))]
     pub fn send_ok<W: AsFd + std::io::Write>(w: W, seq: Sequence) -> Result<()> {
 	trace!("send_ok({seq:?})");
 
@@ -313,35 +368,20 @@ impl Response {
 		Self::PollWakeup1(kh)
 	    }
 
-
 	    ResponseCode::PollWakeup			=> {
 		let len = *rx_len.as_ref().unwrap();
-		if len % core::mem::size_of::<u64>() != 0 {
-		    error!("len {len} not aligned");
-		    return Err(Error::BadLength);
-		}
-
-		let mut tmp = Alloc::<be64>::new(len / core::mem::size_of::<u64>());
-		let khs = recv_to(&r, tmp.as_uninit_bytes(), &mut rx_len)?;
-
-		let (head, khs, tail) = unsafe {
-		    khs.align_to::<be64>()
-		};
-
-		assert_eq!(head.len(), 0);
-		assert_eq!(tail.len(), 0);
+		let tmp = Alloc::<be64>::alloc_bytes(len)?;
+		let khs = recv_to(&r, MaybeUninit::new(tmp), &mut rx_len)?.into_inner();
 
 		Self::PollWakeup(khs.iter().map(|kh| (*kh).into()).collect())
 	    }
 	}))
     }
 
-    //#[instrument(level="trace", skip(r), ret)]
     pub fn recv_to<R: AsFd + std::io::Read>(r: R) -> Result<(Option<Sequence>, Self)> {
 	Self::recv_internal(r, Some(TIMEOUT_READ))
     }
 
-    //#[instrument(level="trace", skip(r), ret)]
     pub fn recv<R: AsFd + std::io::Read>(r: R) -> Result<(Option<Sequence>, Self)> {
 	Self::recv_internal(r, None)
     }
@@ -404,11 +444,46 @@ unsafe impl AsReprBytesMut for Ioctl {}
 
 mod compile_test {
     #![allow(dead_code)]
+
     use super::*;
 
     fn test_00() {
 	use core::mem::size_of;
 
 	const _: () = assert!(size_of::<Header>() == 16);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::os::fd::{OwnedFd, FromRawFd};
+    use nix::sys::socket::{SockFlag, AddressFamily, SockType};
+
+    #[test]
+    fn test_01() {
+	let (fd_in, fd_out) = nix::sys::socket::socketpair(
+	    AddressFamily::Unix,
+	    SockType::Stream,
+	    None,
+	    SockFlag::SOCK_CLOEXEC).unwrap();
+
+	let fd_in_owned = unsafe { OwnedFd::from_raw_fd(fd_in) };
+	let _fd_out_owned = unsafe { OwnedFd::from_raw_fd(fd_out) };
+
+	let data_ref: [be64;4] = [ 1.into(), 23.into(), 42.into(), 66.into() ];
+	let data_sz = data_ref.len() * 8;
+
+	let l = unsafe {
+	    nix::libc::write(fd_out, data_ref.as_ptr() as * const _, data_sz)
+	};
+
+	assert_eq!(l as usize, data_sz);
+
+	let mut in_len = Some(data_sz);
+	let tmp = Alloc::<be64>::alloc_bytes(data_sz).unwrap();
+	let data_in = recv_to(&fd_in_owned, MaybeUninit::new(tmp), &mut in_len).unwrap().into_inner();
+
+	assert_eq!(data_in, data_ref);
     }
 }

@@ -75,7 +75,7 @@ impl Device {
 	    debug!("got {op:?}");
 
 	    match op {
-		proto::Request::Open(_, seq) => {
+		proto::Request::Open(seq, _) => {
 		    warn!("can not open an already opened device");
 		    seq.send_err(&self.conn, nix::Error::EINVAL)?;
 		}

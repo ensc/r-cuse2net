@@ -106,3 +106,11 @@ macro_rules! declare_flags {
 	}
     }
 }
+
+pub struct FmtVecLen<'a, T>(pub &'a[T]);
+
+impl <'a, T> std::fmt::Debug for FmtVecLen<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	f.write_fmt(format_args!("#{}", self.0.len()))
+    }
+}

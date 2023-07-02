@@ -115,28 +115,27 @@ fn main() -> Result<()> {
 	    OpIn::FuseOpen(params)			=>
 		devices.create(addr, info, params)?,
 
-	    OpIn::FuseRelease(params)		=>
+	    OpIn::FuseRelease(params)			=>
 		devices.release(params.fh, info),
 
-	    OpIn::FuseWrite(params, data) =>
+	    OpIn::FuseWrite(params, data)		=>
 		devices.for_fh(params.fh, |dev| dev.write(info, params, data)),
 
-	    OpIn::FuseRead(params) =>
+	    OpIn::FuseRead(params)			=>
 		devices.for_fh(params.fh, |dev| dev.read(info, params)),
 
-	    OpIn::FuseIoctl(args, data)	=> {
+	    OpIn::FuseIoctl(args, data)			=>
 		if virtdev::ioctl::cuse_complete_ioctl(f, info.unique, &args, data)? {
 		    devices.for_fh(args.fh, |dev| dev.ioctl(info, args, data));
 		}
-	    }
 
-	    OpIn::FuseInterrupt { unique }	=>
+	    OpIn::FuseInterrupt { unique }		=>
 		devices.interrupt(info, unique),
 
-	    OpIn::FusePoll(params)	=>
+	    OpIn::FusePoll(params)			=>
 		devices.for_fh(params.fh, |dev| dev.poll(info, params)),
 
-	    op	=> {
+	    op						=> {
 		warn!("unimplemented op {op:?}");
 		let _ = info.send_error(f, nix::Error::ENOSYS);
 	    }

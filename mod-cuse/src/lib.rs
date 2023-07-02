@@ -238,17 +238,71 @@ pub struct PollParams {
     pub events:		ffi::poll_events,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum OpIn<'a> {
     Unknown,
     CuseInit{ version: KernelVersion, flags: ffi::cuse_flags },
     FuseOpen(OpenParams),
     FuseRelease(ReleaseParams),
-    FuseWrite(WriteParams, &'a[u8]),
+    FuseWrite(WriteParams, &'a [u8]),
     FuseRead(ReadParams),
     FuseIoctl(IoctlParams, &'a [u8]),
     FusePoll(PollParams),
     FuseInterrupt { unique: ffi::unique_t },
+}
+
+impl std::fmt::Debug for OpIn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	use crate::util::FmtVecLen;
+
+        match self {
+            Self::Unknown			=>
+		write!(f, "Unknown"),
+
+            Self::CuseInit { version, flags }	=>
+		f.debug_struct("CuseInit")
+		.field("version", version)
+		.field("flags", flags)
+		.finish(),
+
+            Self::FuseOpen(arg0)		=>
+		f.debug_tuple("FuseOpen")
+		.field(arg0)
+		.finish(),
+
+            Self::FuseRelease(arg0)		=>
+		f.debug_tuple("FuseRelease")
+		.field(arg0)
+		.finish(),
+
+            Self::FuseWrite(arg0, arg1)		=>
+		f.debug_tuple("FuseWrite")
+		.field(arg0)
+		.field(&FmtVecLen(arg1))
+		.finish(),
+
+            Self::FuseRead(arg0)		=>
+		f.debug_tuple("FuseRead")
+		.field(arg0)
+		.finish(),
+
+            Self::FuseIoctl(arg0, arg1)		=>
+		f.debug_tuple("FuseIoctl")
+		.field(arg0)
+		.field(&FmtVecLen(arg1))
+		.finish(),
+
+            Self::FusePoll(arg0)		=>
+		f.debug_tuple("FusePoll")
+		.field(arg0)
+		.finish(),
+
+            Self::FuseInterrupt { unique }	=>
+		f.debug_struct("FuseInterrupt")
+		.field("unique", unique)
+		.finish(),
+        }
+    }
 }
 
 impl <'a> OpIn<'a> {

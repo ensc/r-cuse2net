@@ -49,7 +49,7 @@ fn run_thread(sock: TcpStream, device: PathBuf) -> Result<()> {
 	debug!("running {op:?}");
 
 	match op {
-	    proto::Request::Open(args, seq) =>
+	    proto::Request::Open(seq, args) =>
 		realdev::Device::open(device, seq, args.flags.as_ffi(), sock)?,
 
 	    op		=> {

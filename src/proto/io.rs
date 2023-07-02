@@ -8,9 +8,11 @@ fn wait_read(fd: RawFd, d: Duration) -> std::io::Result<Duration>
 {
     use nix::sys::select;
 
+    let (d_s, d_ms) = (d.as_secs() as nix::sys::time::time_t,
+		       (d.as_micros() % 1_000_000) as nix::sys::time::suseconds_t);
+
     let mut fds = select::FdSet::new();
-    let mut timeout = nix::sys::time::TimeVal::new(d.as_secs() as nix::sys::time::time_t,
-						   (d.as_micros() % 1_000_000) as nix::sys::time::suseconds_t);
+    let mut timeout = nix::sys::time::TimeVal::new(d_s, d_ms);
 
     fds.insert(fd);
 
@@ -31,7 +33,7 @@ fn recv_timeout(fd: RawFd, buf: &mut [u8], d: Duration) -> std::io::Result<usize
     assert_ne!(buf.len(), 0);
 
     let l = match socket::recv(fd, buf, MsgFlags::MSG_DONTWAIT) {
-	Err(e) if e == NixError::EAGAIN	=> {
+	Err(e) if e == NixError::EAGAIN		=> {
 	    wait_read(fd, d)?;
 	    0
 	},

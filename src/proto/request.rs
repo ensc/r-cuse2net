@@ -22,13 +22,13 @@ use flags::*;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RequestCode {
-    Open = 1,
-    Release = 2,
-    Write = 3,
-    Read = 4,
-    Ioctl = 5,
-    Poll = 6,
-    Interrupt = 7,
+    Open	= 1,
+    Release	= 2,
+    Write	= 3,
+    Read	= 4,
+    Ioctl	= 5,
+    Poll	= 6,
+    Interrupt	= 7,
 }
 
 impl RequestCode {
@@ -50,15 +50,61 @@ impl RequestCode {
     }
 }
 
-#[derive(Debug)]
 pub enum Request<'a> {
-    Open(Open, Sequence),
+    Open(Sequence, Open),
     Release(Sequence),
     Write(Sequence, Write, &'a[u8]),
     Read(Sequence, Read),
     Ioctl(Sequence, Ioctl, Arg),
     Poll(Sequence, Poll),
     Interrupt(Sequence),
+}
+
+impl std::fmt::Debug for Request<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Open(seq, arg1)		=>
+		f.debug_tuple("Open")
+		.field(seq).field(arg1)
+		.finish(),
+
+            Self::Release(seq)			=>
+		f.debug_tuple("Release")
+		.field(seq)
+		.finish(),
+
+            Self::Write(seq, wrinfo, _data)	=>
+		f.debug_tuple("Write")
+		.field(seq)
+		.field(wrinfo)
+//		.field(data)
+		.finish(),
+
+            Self::Read(seq, rdinfo)		=>
+		f.debug_tuple("Read")
+		.field(seq)
+		.field(rdinfo)
+		.finish(),
+
+            Self::Ioctl(seq, ioinfo, arg)	=>
+		f.debug_tuple("Ioctl")
+		.field(seq)
+		.field(ioinfo)
+		.field(arg)
+		.finish(),
+
+            Self::Poll(seq, pollinfo)		=>
+		f.debug_tuple("Poll")
+		.field(seq)
+		.field(pollinfo)
+		.finish(),
+
+            Self::Interrupt(seq)		=>
+		f.debug_tuple("Interrupt")
+		.field(seq)
+		.finish(),
+        }
+    }
 }
 
 fn sub_slice(buf: &mut [MaybeUninit<u8>], sz: usize) -> MaybeUninit<&mut [u8]> {
@@ -92,7 +138,8 @@ impl <'a> Request<'a> {
 	let seq = hdr.seq()?;
 
 	let res = match op {
-	    RequestCode::Open		=> Self::Open(recv_to(r, Open::uninit(), &mut rx_len)?, seq),
+	    RequestCode::Open		=>
+		Self::Open(seq, recv_to(r, Open::uninit(), &mut rx_len)?),
 	    RequestCode::Release	=> Self::Release(seq),
 	    RequestCode::Write		=> {
 		let wrinfo = recv_to(&r, Write::uninit(), &mut rx_len)?;
@@ -102,6 +149,7 @@ impl <'a> Request<'a> {
 	    }
 	    RequestCode::Read		=> {
 		let rdinfo = recv_to(&r, Read::uninit(), &mut rx_len)?;
+
 		Self::Read(seq, rdinfo)
 	    }
 	    RequestCode::Ioctl		=> {
@@ -301,7 +349,6 @@ impl Request<'_> {
 	Ok(seq)
     }
 }
-
 
 #[repr(C)]
 #[derive(Debug, Default)]

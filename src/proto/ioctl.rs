@@ -232,6 +232,8 @@ impl Arg {
 	let cmd = BadIoctl::new(cmd.into());
 	let code = cmd.get_native().as_numeric();
 
+	// warn!("XXXXX {self:?} {cmd:?}");
+
 	let (arg, buf): (u64, Vec<u8>) = match cmd.get_native() {
 	    ioctl::TIOCSLCKTRMIOS |
 	    ioctl::TCSETSW |
@@ -291,6 +293,8 @@ impl Arg {
 	if buf.len() > 0 && size < buf.len() {
 	    warn!("excess data in ioctl param ({size} < {})", buf.len());
 	}
+
+	// warn!("XXXXXX {cmd:?} {arg:x}");
 
 	Ok(match cmd.get_native() {
 	    ioctl::TIOCSLCKTRMIOS |

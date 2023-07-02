@@ -26,6 +26,9 @@ pub enum Error {
     #[error("bad length")]
     BadLength,
 
+    #[error("unaligned length")]
+    UnalignedLength(usize, u8),
+
 
     #[error("bad ioctl param")]
     BadIoctlParam,
