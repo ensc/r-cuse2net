@@ -112,11 +112,14 @@ impl Read<'_> {
     }
 
     fn send_data(&self, req: ReadRequest, buf: &[u8]) {
+	trace!("sending #{} bytes of data @{:?}", buf.len(), req.0);
 	let _ = proto::Response::send_read(&self.0.read().device.conn, req.0, buf)
 	    .map_err(|e| error!("failed to send data: {e:?}"));
     }
 
     fn send_err(&self, seq: Sequence, rc: nix::Error) {
+	trace!("sending error {rc}@{seq:?}");
+
 	let _ = proto::Response::send_err(&self.0.read().device.conn, seq, rc)
 	    .map_err(|e| error!("failed to send err -{rc} response: {e:?}"));
     }
@@ -135,17 +138,49 @@ impl Read<'_> {
 
     }
 
-    pub fn do_intr(&self) {
+    pub fn do_intr(&self, seq: Option<Sequence>) {
 	let fd_sync = self.0.read().fd_tx.as_ref().unwrap().as_raw_fd();
 
-	while let Some(req) = self.next_request() {
-	    trace!("sending INTR to {req:?}");
-	    self.send_err(req.0, nix::Error::EINTR);
-	}
+	match seq {
+	    None	=> {
+		while let Some(req) = self.next_request() {
+		    trace!("sending INTR to {req:?}");
+		    self.send_err(req.0, nix::Error::EINTR);
+		}
 
-	if let Some(req) = self.take_pending() {
-	    trace!("sending INTR to {req:?}");
-	    self.send_err(req.0, nix::Error::EINTR);
+		if let Some(req) = self.take_pending() {
+		    trace!("sending INTR to {req:?}");
+		    self.send_err(req.0, nix::Error::EINTR);
+		}
+	    },
+
+	    Some(seq)	=> {
+		let mut this = self.0.write();
+
+		match &this.pending_request {
+		    Some((req_seq, _)) if *req_seq == seq	=> {
+			trace!("sending INTR to {seq:?}");
+			self.send_err(seq, nix::Error::EINTR);
+			this.pending_request.take();
+		    }
+
+		    _		=> {
+			let mut req = this.read_ops.iter()
+			    .enumerate()
+			    .filter(|(_, (req_seq, _))| *req_seq == seq);
+
+			if let Some((pos, _)) = req.next() {
+			    trace!("sending INTR to {req:?}");
+			    self.send_err(seq, nix::Error::EINTR);
+
+			    assert!(req.next().is_none());
+
+			    drop(req);
+			    this.read_ops.remove(pos);
+			}
+		    }
+		}
+	    }
 	}
 
 	Self::send_sync(fd_sync);
@@ -154,7 +189,7 @@ impl Read<'_> {
     fn close_internal(&mut self) {
 	let fd_sync = self.0.write().fd_tx.take().unwrap().as_raw_fd();
 
-	self.do_intr();
+	self.do_intr(None);
 	Self::send_sync(fd_sync);
     }
 
@@ -193,7 +228,7 @@ impl Read<'_> {
 
 		rc.map_err(|e| (e, req))?;
 
-		if fds[0].revents().map(|v| v.contains(PollFlags::POLLIN)).unwrap_or(true) {
+		if fds[0].revents().map(|v| v.intersects(PollFlags::POLLIN)).unwrap_or(true) {
 		    self.consume_sync(fd_sync)
 		}
 

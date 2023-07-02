@@ -129,6 +129,10 @@ fn main() -> Result<()> {
 		    devices.for_fh(args.fh, |dev| dev.ioctl(info, args, data));
 		}
 	    }
+
+	    OpIn::FuseInterrupt { unique }	=>
+		devices.interrupt(info, unique),
+
 	    OpIn::FusePoll(params)	=>
 		devices.for_fh(params.fh, |dev| dev.poll(info, params)),
 

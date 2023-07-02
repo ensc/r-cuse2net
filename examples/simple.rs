@@ -20,6 +20,17 @@ fn set_termios_raw(fd: RawFd) -> r_ser2net::Result<()> {
     Ok(())
 }
 
+fn poll<F: AsRawFd>(fd: &F, flags: PollFlags) -> nix::Result<bool> {
+    let fd = fd.as_raw_fd();
+    let mut pfd = [
+	PollFd::new(fd, PollFlags::POLLIN)
+    ];
+
+    nix::poll::poll(&mut pfd, RX_TIMEOUT.as_millis() as i32)?;
+
+    Ok(pfd[0].revents().unwrap().intersects(flags))
+}
+
 fn read_all<F: AsRawFd>(fd: &F, mut cnt: usize) -> nix::Result<Vec<u8>> {
     let fd = fd.as_raw_fd();
     let mut res = Vec::<u8>::with_capacity(cnt);
@@ -39,12 +50,8 @@ fn read_all<F: AsRawFd>(fd: &F, mut cnt: usize) -> nix::Result<Vec<u8>> {
 		cnt -= l;
 	    }
 	    Err(e) if e == nix::Error::EAGAIN	=> {
-		let mut pfd = [
-		    PollFd::new(fd, PollFlags::POLLIN)
-		];
-		nix::poll::poll(&mut pfd, RX_TIMEOUT.as_millis() as i32)?;
+		poll(&fd, PollFlags::POLLIN)?;
 	    }
-
 
 	    Err(e)	=> return Err(e)
 	}
@@ -94,6 +101,16 @@ fn main() -> r_ser2net::Result<()> {
 	f_ser.write_all(b"test")?;
 	let tmp = read_all(&f_cuse, 4)?;
 	assert_eq!(&tmp, b"test");
+    }
+
+    {
+	print!("write(ser -> test (poll)");
+	f_ser.write_all(b"TEST")?;
+	assert!(poll(&f_cuse, PollFlags::POLLIN)?);
+	let tmp = read_all(&f_cuse, 4)?;
+	assert_eq!(&tmp, b"TEST");
+
+	assert!(poll(&f_cuse, PollFlags::POLLIN).is_err());
     }
 
 

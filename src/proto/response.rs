@@ -78,7 +78,7 @@ pub enum Response {
     Write(u32),
     Read(Vec<u8>),
     Ioctl(u64, Arg),
-    Poll(u32),
+    Poll(PollEvent),
     PollWakeup(Vec<u64>),
     PollWakeup1(u64),
 }
@@ -86,7 +86,9 @@ pub enum Response {
 impl Response {
     const MAX_SZ: usize = 0x1_0000;
 
-    pub fn send_poll<W: AsFd + std::io::Write>(w: W, seq: Sequence, ev: u32) -> Result<()> {
+    pub fn send_poll<W: AsFd + std::io::Write>(w: W, seq: Sequence, ev: PollEvent) -> Result<()> {
+	trace!("send_poll({seq:?}, {ev:x})");
+
 	let ev: be32 = ev.into();
 	let ev = ev.as_repr_bytes();
 
@@ -121,7 +123,7 @@ impl Response {
 	Ok(())
     }
 
-    pub fn send_poll_wakeup_n<W: AsFd + std::io::Write>(w: W, kh: &[u64]) -> Result<()> {
+    fn send_poll_wakeup_n<W: AsFd + std::io::Write>(w: W, kh: &[u64]) -> Result<()> {
 	let kh: Vec<be64> = kh.iter().map(|h| be64::from(*h)).collect();
 	let kh: &[u8] = unsafe {
 	    core::slice::from_raw_parts(kh.as_ptr() as * const u8, kh.len() * 8)
@@ -142,6 +144,8 @@ impl Response {
     }
 
     pub fn send_poll_wakeup<W: AsFd + std::io::Write>(w: W, kh: &[u64]) -> Result<()> {
+	trace!("send_poll_wakeup({kh:?})");
+
 	match kh.len() {
 	    0	=> Ok(()),
 	    1	=> Self::send_poll_wakeup_1(w, kh[0]),
@@ -150,6 +154,8 @@ impl Response {
     }
 
     pub fn send_read<W: AsFd + std::io::Write>(w: W, seq: Sequence, data: &[u8]) -> Result<()> {
+	trace!("send_read({seq:?}, {})", data.len());
+
 	let hdr = Header {
 	    op:		ResponseCode::Read.as_u8().into(),
 	    err:	0.into(),
@@ -166,6 +172,8 @@ impl Response {
 
     //#[instrument(level="trace", skip(w))]
     pub fn send_ioctl<W: AsFd + std::io::Write>(w: W, seq: Sequence, rc: u64, arg: Arg) -> Result<()> {
+	trace!("send_ioctl({seq:?}, {rc}, {arg:?})");
+
 	let ioctl = Ioctl {
 	    retval:	rc.into(),
 	    arg_type:	arg.code(),
@@ -192,6 +200,8 @@ impl Response {
 
     //#[instrument(level="trace", skip(w))]
     pub fn send_write<W: AsFd + std::io::Write>(w: W, seq: Sequence, size: u32) -> Result<()> {
+	trace!("send_write({seq:?}, {size})");
+
 	let wrinfo: be32 = size.into();
 	let hdr = Header {
 	    op:		ResponseCode::Write.as_u8().into(),
@@ -210,6 +220,8 @@ impl Response {
 
     //#[instrument(level="trace", skip(w))]
     pub fn send_err<W: AsFd + std::io::Write>(w: W, seq: Sequence, err: nix::Error) -> Result<()> {
+	trace!("send_err({seq:?}, {err})");
+
 	let hdr = Header {
 	    op:		ResponseCode::Result.as_u8().into(),
 	    err:	(err as u16).into(),
@@ -225,6 +237,8 @@ impl Response {
 
     //#[instrument(level="trace", skip(w))]
     pub fn send_ok<W: AsFd + std::io::Write>(w: W, seq: Sequence) -> Result<()> {
+	trace!("send_ok({seq:?})");
+
 	let hdr = Header {
 	    op:		ResponseCode::Result.as_u8().into(),
 	    err:	0.into(),
@@ -262,6 +276,11 @@ impl Response {
 	Ok((seq, match op {
 	    ResponseCode::Result if hdr.len() == 0	=>
 		Self::Ok,
+
+	    ResponseCode::Result			=> {
+		warn!("bad response {hdr:?}");
+		return Err(Error::BadResponse);
+	    }
 
 	    ResponseCode::Write				=>
 		Self::Write(recv_to(&r, be32::uninit(), &mut rx_len)?.into()),
@@ -314,12 +333,6 @@ impl Response {
 
 		Self::PollWakeup(khs.iter().map(|kh| (*kh).into()).collect())
 	    }
-
-	    ResponseCode::Result			=> {
-		warn!("bad response {hdr:?}");
-		return Err(Error::BadResponse);
-	    },
-
 	}))
     }
 

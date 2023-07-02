@@ -105,6 +105,22 @@ impl DeviceInner {
 	Ok(())
     }
 
+
+    fn handle_error(&self, seq: Sequence, rc: i32) -> crate::Result<()> {
+	let (req, info) = match self.remove_request(seq) {
+	    None	=> {
+		warn!("no such request {seq:?}");
+		return Ok(());
+	    }
+
+	    Some(req)	=> req
+	};
+
+	info.send_error(&self.cuse, nix::Error::from_i32(rc))?;
+
+	Ok(())
+    }
+
     //#[instrument(level="trace", skip(self), ret)]
     fn handle_response(&self, seq: Sequence, resp: proto::Response) -> crate::Result<()> {
 	use ensc_cuse_ffi::AsBytes;
@@ -146,6 +162,15 @@ impl DeviceInner {
 
 	    (Request::Ioctl(cmd), R::Ioctl(retval, arg)) =>
 		self.handle_ioctl(info, cmd, retval, arg)?,
+
+	    (Request::Poll, R::Poll(ev)) => {
+		let poll_resp = cuse_ffi::fuse_poll_out {
+		    revents:	cuse_ffi::poll_events::from_ffi(ev),
+		    padding:	0,
+		};
+
+		info.send_response(&self.cuse, &[ poll_resp.as_bytes() ])?;
+	    }
 
 	    (req, resp)				=> {
 		warn!("unexpected response {resp:?} for {req:?}");
@@ -208,7 +233,12 @@ impl DeviceInner {
 			warn!("failed to handle even: {e:?}");
 		    }
 
-		Err(e)			=> {
+		Err(proto::Error::RemoteError(Some(seq), rc))	=>
+		    if let Err(e) = self.handle_error(seq, rc) {
+			warn!("failed to handle error: {rc}@{seq:?}");
+		    }
+
+		Err(e)		=> {
 		    warn!("error {e:?}");
 		    break;
 		}
@@ -292,6 +322,60 @@ impl DeviceInner {
 	}
 
 	info!("tx_thread terminated");
+    }
+
+    pub fn try_interrupt(&self, info: &OpInInfo, unique: u64) {
+	let mut state = self.state.write();
+
+	// try pending requests first
+	let mut request = state.pending.iter()
+	    .enumerate()
+	    .filter(|(_, (_, info))| info.unique == unique);
+
+	if let Some((pos, (_, info))) = request.next() {
+	    trace!("interrupting pending request #{pos}");
+	    assert!(request.next().is_none());
+
+	    self.send_error(&info, nix::Error::EINTR);
+	    drop(request);
+
+	    state.pending.remove(pos);
+	    return;
+	}
+
+	let mut request = state.requests.iter()
+	    .filter(|(_, (_, info))| info.unique == unique);
+
+	if let Some((seq, (req, info))) = request.next() {
+	    trace!("interrupting active request #{seq:?} {req:?}");
+
+
+	}
+
+    }
+
+    pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])
+    {
+	let arg = match Arg::decode(params.cmd, params.arg, data, proto::ioctl::Source::Cuse) {
+	    Err(e)	=> {
+		error!("failed to decode ioctl: {e:?}");
+		self.send_error(&info, nix::Error::EINVAL);
+		return;
+	    },
+
+	    Ok(arg)	=> arg
+	};
+
+	self.state.write().pending.push_back((Pending::Ioctl {
+	    cmd: params.cmd.into(),
+	    arg: arg
+	}, info));
+	self.state_change.notify_all();
+    }
+
+    fn send_error(&self, info: &OpInInfo, rc: nix::Error) {
+	info.send_error(&self.cuse, nix::Error::EINVAL)
+	    .unwrap_or_else(|e| error!("failed to send error {rc:?}: {e:?}"));
     }
 }
 
@@ -401,6 +485,10 @@ impl Device {
 	self.0.state_change.notify_all();
     }
 
+    pub fn try_interrupt(&self, info: &OpInInfo, unique: u64) {
+	self.0.try_interrupt(info, unique);
+    }
+
     pub fn write(&self, info: OpInInfo, params: WriteParams, data: &[u8])
     {
 	self.0.state.write().pending.push_back((Pending::Write(params, data.into()), info));
@@ -416,26 +504,11 @@ impl Device {
     pub fn poll(&self, info: OpInInfo, params: PollParams)
     {
 	self.0.state.write().pending.push_back((Pending::Poll(params), info));
-
+	self.0.state_change.notify_all();
     }
 
     pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])
     {
-	let arg = match Arg::decode(params.cmd, params.arg, data, proto::ioctl::Source::Cuse) {
-	    Err(e)	=> {
-		error!("failed to decode ioctl: {e:?}");
-		info.send_error(&self.0.cuse, nix::Error::EINVAL)
-		    .unwrap_or_else(|e| error!("failed to send error response: {e:?}"));
-		return;
-	    },
-
-	    Ok(arg)	=> arg
-	};
-
-	self.0.state.write().pending.push_back((Pending::Ioctl {
-	    cmd: params.cmd.into(),
-	    arg: arg
-	}, info));
-	self.0.state_change.notify_all();
+	self.0.ioctl(info, params, data);
     }
 }

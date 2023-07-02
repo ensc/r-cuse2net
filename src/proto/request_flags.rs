@@ -17,7 +17,7 @@ macro_rules! decl_flag {
 		Self(be32::from_native(0))
 	    }
 
-	    pub const fn contains(self, other: Self) -> bool {
+	    pub const fn intersects(self, other: Self) -> bool {
 		!self.bit_and(other).is_empty()
 	    }
 
@@ -64,11 +64,11 @@ impl FhFlags {
     pub fn as_ffi(self) -> OFlag {
 	let mut res = OFlag::empty();
 
-	if self.contains(Self::NONBLOCK) {
+	if self.intersects(Self::NONBLOCK) {
 	    res |= OFlag::O_NONBLOCK;
 	}
 
-	match (self.contains(Self::RD), self.contains(Self::WR)) {
+	match (self.intersects(Self::RD), self.intersects(Self::WR)) {
 	    (true, true)	=> res |= OFlag::O_RDWR,
 	    (false, true)	=> res |= OFlag::O_WRONLY,
 	    (true, false)	=> res |= OFlag::O_RDONLY,
@@ -81,7 +81,7 @@ impl FhFlags {
     pub const fn from_cuse(flags: cuse_ffi::fh_flags) -> Self {
 	let mut res = Self::empty();
 
-	if flags.contains(cuse_ffi::fh_flags::NONBLOCK) {
+	if flags.intersects(cuse_ffi::fh_flags::NONBLOCK) {
 	    res = res.bit_or(Self::NONBLOCK);
 	}
 
@@ -122,7 +122,7 @@ impl PollFlags {
     pub const fn from_cuse(flags: cuse_ffi::poll_flags) -> Self {
 	let mut res = 0;
 
-	if flags.contains(cuse_ffi::poll_flags::SCHEDULE_NOTIFY) {
+	if flags.intersects(cuse_ffi::poll_flags::SCHEDULE_NOTIFY) {
 	    res |= Self::SCHEDULE_NOTIFY.0.as_native();
 	}
 

@@ -16,7 +16,7 @@ pub fn cuse_complete_ioctl<F: AsFd>(
 {
     use ensc_cuse_ffi::AsBytes;
 
-    if !flags.contains(ioctl_flags::UNRESTRICTED) {
+    if !flags.intersects(ioctl_flags::UNRESTRICTED) {
 	return Ok(true);
     }
 

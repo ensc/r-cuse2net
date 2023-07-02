@@ -55,6 +55,8 @@ impl <F: AsFd> CuseDevice<F> {
 
     pub fn send_notify(&self, code: ffi::fuse_notify_code, data: &[u8]) -> Result<(), Error>
     {
+	trace!("send_notify({code:?}, #{})", data.len());
+
 	let len = core::mem::size_of::<ffi::fuse_out_header>() + data.len();
 	let hdr = ffi::fuse_out_header {
 	    len:	len as u32,
@@ -68,6 +70,8 @@ impl <F: AsFd> CuseDevice<F> {
 
     pub fn send_error(&self, unique: u64, rc: u32) -> Result<(), Error>
     {
+	trace!("send_error({unique}, {rc})");
+
 	let hdr = ffi::fuse_out_header {
 	    len:	core::mem::size_of::<ffi::fuse_out_header>() as u32,
 	    error:	-(rc as i32),
@@ -83,6 +87,8 @@ impl <F: AsFd> CuseDevice<F> {
 
     pub fn send_response(&self, unique: u64, data: &[&[u8]]) -> Result<(), Error>
     {
+	trace!("send_response({unique})");
+
 	let len = data.iter().fold(core::mem::size_of::<ffi::fuse_out_header>(),
 				   |acc, a| acc + a.len());
 

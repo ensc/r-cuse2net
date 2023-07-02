@@ -18,6 +18,10 @@ macro_rules! declare_flags {
 	impl $id {
 	    $( pub const $flag: Self = Self(1 << $bit); )*
 
+	    pub const fn from_ffi(v: $type) -> Self {
+		Self(v)
+	    }
+
 	    pub const fn empty() -> Self {
 		Self(0)
 	    }
@@ -37,7 +41,7 @@ macro_rules! declare_flags {
 		self.0 == 0
 	    }
 
-	    pub const fn contains(self, other: Self) -> bool {
+	    pub const fn intersects(self, other: Self) -> bool {
 		self.0 & other.0 != 0
 	    }
 

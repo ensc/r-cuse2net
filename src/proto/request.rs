@@ -9,7 +9,7 @@ use ensc_ioctl_ffi::ffi::ioctl;
 
 use super::ioctl::Arg;
 use super::{Sequence, AsReprBytes, TIMEOUT_READ, Error, Result, AsReprBytesMut};
-use super::io::{send_vectored_all, recv_exact_timeout, recv_to};
+use super::io::{send_vectored_all, recv_exact_timeout, recv_to, send_all};
 use super::endian::*;
 
 static OP_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -28,6 +28,7 @@ pub enum RequestCode {
     Read = 4,
     Ioctl = 5,
     Poll = 6,
+    Interrupt = 7,
 }
 
 impl RequestCode {
@@ -43,6 +44,7 @@ impl RequestCode {
 	    4	=> Self::Read,
 	    5	=> Self::Ioctl,
 	    6	=> Self::Poll,
+	    7	=> Self::Interrupt,
 	    _	=> return None,
 	})
     }
@@ -56,6 +58,7 @@ pub enum Request<'a> {
     Read(Sequence, Read),
     Ioctl(Sequence, Ioctl, Arg),
     Poll(Sequence, Poll),
+    Interrupt(Sequence),
 }
 
 fn sub_slice(buf: &mut [MaybeUninit<u8>], sz: usize) -> MaybeUninit<&mut [u8]> {
@@ -113,6 +116,8 @@ impl <'a> Request<'a> {
 		let pollinfo = recv_to(&r, Poll::uninit(), &mut rx_len)?;
 		Self::Poll(seq, pollinfo)
 	    }
+	    RequestCode::Interrupt	=>
+		Self::Interrupt(seq)
 	};
 
 	match rx_len.unwrap() {
@@ -123,6 +128,19 @@ impl <'a> Request<'a> {
 		Err(super::Error::BadLength)
 	    }
 	}
+    }
+
+    pub fn send_interrupt<W: AsFd + std::io::Write>(w: W, seq: Sequence) -> Result<()> {
+	let hdr = Header {
+	    op:		RequestCode::Interrupt.as_u8().into(),
+	    seq:	seq.as_ffi().into(),
+	    len:	0.into(),
+	    .. Default::default()
+	};
+
+	send_all(w, hdr.as_repr_bytes())?;
+
+	Ok(())
     }
 }
 

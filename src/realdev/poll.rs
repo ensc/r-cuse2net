@@ -45,6 +45,27 @@ pub fn poll_to_epoll(ev: PollFlags) -> EpollFlags {
     map(ev, PollFlags::POLLWRBAND, EpollFlags::EPOLLWRBAND)
 }
 
+#[cfg(test)]
+mod test_conv {
+    use super::*;
+
+    #[test]
+    fn test_00() {
+	assert_eq!(proto_to_poll(nix::libc::POLLIN as u32),  PollFlags::POLLIN);
+	assert_eq!(proto_to_poll(nix::libc::POLLOUT as u32), PollFlags::POLLOUT);
+	assert_eq!(proto_to_poll((nix::libc::POLLOUT | nix::libc::POLLIN) as u32),
+		   PollFlags::POLLOUT | PollFlags::POLLIN);
+    }
+
+    #[test]
+    fn test_01() {
+	assert_eq!(poll_to_epoll(PollFlags::POLLIN),  EpollFlags::EPOLLIN);
+	assert_eq!(poll_to_epoll(PollFlags::POLLOUT), EpollFlags::EPOLLOUT);
+	assert_eq!(poll_to_epoll(PollFlags::POLLIN | PollFlags::POLLOUT),
+		   EpollFlags::EPOLLIN | EpollFlags::EPOLLOUT);
+    }
+}
+
 pub struct PollInner<'a> {
     device:		&'a Device,
     fd_rx:		Option<OwnedFd>,
@@ -72,9 +93,11 @@ impl <'a> PollInner<'a> {
     }
 
     pub fn signal(&self, ev: EpollFlags) {
+	trace!("signal({ev:?}, {:?}", self.khs);
+
 	let khs: Vec<_> = self.khs.iter()
 	    .filter(|(kh, kh_ev)| {
-		ev.contains((**kh_ev) | EpollFlags::EPOLLERR | EpollFlags::EPOLLHUP)
+		ev.intersects((**kh_ev) | EpollFlags::EPOLLERR | EpollFlags::EPOLLHUP)
 	    })
 	    .map(|(kh, kh_ev)| *kh)
 	    .collect();
@@ -94,6 +117,7 @@ impl <'a> PollInner<'a> {
     }
 
     pub fn register_kh(&mut self, kh: Kh, ev: PollFlags) {
+	trace!("{kh}, {ev:?}");
 
 	if ev.is_empty() {
 	    self.khs.remove(&kh);
@@ -136,6 +160,8 @@ impl Poll<'_> {
     }
 
     pub fn poll(&self, req: (Sequence, Kh, ProtoEvent)) {
+	trace!("poll{req:?}");
+
 	let mut this = self.0.write();
 
 	match this.poll((req.0, req.2)) {
@@ -145,6 +171,8 @@ impl Poll<'_> {
     }
 
     pub fn poll_once(&self, req: (Sequence, ProtoEvent)) {
+	trace!("poll_once{req:?}");
+
 	let this = self.0.read();
 
 	match this.poll(req) {
@@ -199,6 +227,6 @@ impl Poll<'_> {
 	    }
 	}
 
-	todo!()
+	Ok(())
     }
 }

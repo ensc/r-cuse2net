@@ -80,6 +80,17 @@ impl DeviceRegistry {
 	})))
     }
 
+    pub fn interrupt(&self, info: OpInInfo, unique: u64) {
+	let this = self.0.write();
+
+	for (_, dev) in &this.devices {
+	    match dev {
+		DeviceState::Opening(_)		=> {}, // noop
+		DeviceState::Running(dev)	=> dev.try_interrupt(&info, unique),
+	    }
+	}
+    }
+
     pub fn for_fh<F: FnOnce(&Device)>(&self, fh: u64, func: F) {
 	match self.read().devices.get(&fh) {
 	    None	=>

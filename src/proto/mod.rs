@@ -29,6 +29,10 @@ pub use response::Response;
 pub struct Sequence(u64);
 
 impl Sequence {
+    pub fn as_ffi(self) -> u64 {
+	self.0
+    }
+
     pub fn send_err<W: AsFd + std::io::Write>(self, w: W, err: nix::Error) -> Result<()> {
 	Response::send_err(w, self, err)
     }

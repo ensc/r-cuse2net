@@ -107,6 +107,10 @@ impl Device {
 		proto::Request::Poll(seq, parm)		=> {
 		    self.poll(poll, seq, parm.kh.into(), parm.flags.into(), parm.events.into())?;
 		}
+
+		proto::Request::Interrupt(seq) => {
+		    read.do_intr(Some(seq));
+		}
 	    }
 	}
     }
