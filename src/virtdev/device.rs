@@ -1,14 +1,14 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::{TcpStream, SocketAddr};
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use parking_lot::{Condvar, RwLock, Mutex};
+use parking_lot::RwLock;
 
 use ensc_cuse_ffi::ffi::{self as cuse_ffi, ioctl_flags, fh_flags};
 use ensc_cuse_ffi::{IoctlParams, OpInInfo, WriteParams, ReadParams, PollParams};
 
-use ensc_ioctl_ffi::{ffi as ioctl_ffi};
+use ensc_ioctl_ffi::ffi as ioctl_ffi;
 use ioctl_ffi::ioctl;
 
 use crate::proto::Sequence;
@@ -38,29 +38,20 @@ enum Pending {
 
 #[derive(Default)]
 struct State {
-    closing:		bool,
     closed:		bool,
     requests:		HashMap<Sequence, (Request, OpInInfo)>,
-    pending:		VecDeque<(Pending, OpInInfo)>,
 }
 
-struct DeviceInner {
+pub struct DeviceInner {
     cuse:		Arc<CuseFileDevice>,
     rx_hdl:		Option<JoinHandle<()>>,
-    tx_hdl:		Option<JoinHandle<()>>,
     conn:		TcpStream,
     state:		RwLock<State>,
-    state_change:	Condvar,
-    state_mutex:	Mutex<()>,
 }
 
 impl DeviceInner {
     fn is_closed(&self) -> bool {
 	self.state.read().closed
-    }
-
-    fn is_closing(&self) -> bool {
-	self.state.read().closing
     }
 
     fn remove_request(&self, seq: Sequence) -> Option<(Request, OpInInfo)> {
@@ -94,7 +85,6 @@ impl DeviceInner {
 	}
 
 	debug!("IOCTL: iov={resp_data:?}");
-
 
 	info.send_response(&self.cuse, &resp_data[..pos])?;
 
@@ -245,8 +235,7 @@ impl DeviceInner {
 	info!("rx_thread terminated");
     }
 
-    //#[instrument(level="trace", skip(self), ret)]
-    fn handle_cuse(&self, req: Pending, info: OpInInfo) -> Result<(), (OpInInfo, Error)> {
+    fn handle_cuse_internal(&self, req: Pending, info: OpInInfo) -> Result<(), (OpInInfo, Error)> {
 	debug!("tx thread: handle {req:?}");
 
 	let mut state = self.state.write();
@@ -255,7 +244,6 @@ impl DeviceInner {
 
 	let res = match req {
 	    Pending::Release	=> {
-		state.closing = true;
 		proto::Request::send_release(&self.conn)
 		    .map(|seq| (seq, Request::Release))
 	    },
@@ -292,58 +280,19 @@ impl DeviceInner {
 	}
     }
 
-    fn next_pending(&self) -> Option<(Pending, OpInInfo)> {
-	self.state.write().pending.pop_front()
-    }
-
-    fn tx_thread(self: Arc<Self>) {
-	info!("tx_thread running");
-
-	loop {
-	    trace!("tx: processing pending commands");
-
-	    while let Some((req, info)) = self.next_pending() {
-		match self.handle_cuse(req, info) {
-		    Ok(_)		=> {},
-		    Err((info, e))	=> {
-			warn!("failed to handle request: {e:?}");
-			let _ = info.send_error(&self.cuse, nix::Error::EIO);
-		    }
-		}
+    fn handle_cuse(&self, req: Pending, info: OpInInfo)  {
+	match self.handle_cuse_internal(req, info) {
+	    Ok(_)		=> {},
+	    Err((info, e))	=> {
+		warn!("failed to handle request: {e:?}");
+		let _ = info.send_error(&self.cuse, nix::Error::EIO);
 	    }
-
-	    if self.is_closing() {
-		break;
-	    }
-
-	    trace!("tx: waiting for new data");
-
-	    let mut lock = self.state_mutex.lock();
-	    self.state_change.wait(&mut lock);
 	}
-
-	info!("tx_thread terminated");
     }
 
     pub fn try_interrupt(&self, info: OpInInfo, unique: u64) {
-	let mut state = self.state.write();
+	let state = self.state.read();
 
-	// try pending requests first
-	let mut request = state.pending.iter()
-	    .enumerate()
-	    .filter(|(_, (_, info))| info.unique == unique);
-
-	if let Some((pos, (_, info))) = request.next() {
-	    trace!("interrupting pending request #{pos}");
-	    assert!(request.next().is_none());
-
-	    self.send_error(info, nix::Error::EINTR);
-
-	    state.pending.remove(pos);
-	    return;
-	}
-
-	// when not in list of pending request
 	let mut request = state.requests.iter()
 	    .filter(|(_, (_, info))| info.unique == unique);
 
@@ -354,10 +303,9 @@ impl DeviceInner {
 
 	    let seq = *seq;
 
-	    state.pending.push_back((Pending::Interrupt(seq), info));
 	    drop(state);
 
-	    self.state_change.notify_all();
+	    self.handle_cuse(Pending::Interrupt(seq), info);
 	}
     }
 
@@ -373,11 +321,25 @@ impl DeviceInner {
 	    Ok(arg)	=> arg
 	};
 
-	self.state.write().pending.push_back((Pending::Ioctl {
+	self.handle_cuse(Pending::Ioctl {
 	    cmd: params.cmd.into(),
 	    arg: arg
-	}, info));
-	self.state_change.notify_all();
+	}, info);
+    }
+
+    pub fn write(&self, info: OpInInfo, params: WriteParams, data: &[u8])
+    {
+	self.handle_cuse(Pending::Write(params, data.into()), info);
+    }
+
+    pub fn read(&self, info: OpInInfo, params: ReadParams)
+    {
+	self.handle_cuse(Pending::Read(params), info);
+    }
+
+    pub fn poll(&self, info: OpInInfo, params: PollParams)
+    {
+	self.handle_cuse(Pending::Poll(params), info);
     }
 
     fn send_error(&self, info: &OpInInfo, rc: nix::Error) {
@@ -387,6 +349,14 @@ impl DeviceInner {
 }
 
 pub struct Device(Arc<DeviceInner>);
+
+impl std::ops::Deref for Device {
+    type Target = DeviceInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct OpenArgs {
@@ -442,11 +412,8 @@ impl Device {
 	    cuse:		args.cuse,
 	    conn:		conn,
 	    state:		Default::default(),
-	    state_change:	Condvar::new(),
-	    state_mutex:	Mutex::new(()),
 
 	    rx_hdl:		None,
-	    tx_hdl:		None,
 	});
 
 	let inner = Arc::new(RwLock::new(inner));
@@ -457,7 +424,6 @@ impl Device {
 	let mut dev = inner.write();
 
 	let inner_rx = inner.clone();
-	let inner_tx = inner.clone();
 
 	let rx_hdl = std::thread::Builder::new()
 	    .name("rx".to_string())
@@ -465,17 +431,10 @@ impl Device {
 		DeviceInner::rx_thread(inner_rx.read().clone())
 	    })?;
 
-	let tx_hdl = std::thread::Builder::new()
-	    .name("tx".to_string())
-	    .spawn(move || {
-		DeviceInner::tx_thread(inner_tx.read().clone())
-	    })?;
-
 	{
 	    let dev = Arc::get_mut(&mut dev).unwrap();
 
 	    dev.rx_hdl = Some(rx_hdl);
-	    dev.tx_hdl = Some(tx_hdl);
 	}
 
 	Ok(Self(dev.clone()))
@@ -485,34 +444,6 @@ impl Device {
     {
 	info!("closing device");
 
-	self.0.state.write().pending.push_back((Pending::Release, info));
-	self.0.state_change.notify_all();
-    }
-
-    pub fn try_interrupt(&self, info: OpInInfo, unique: u64) {
-	self.0.try_interrupt(info, unique);
-    }
-
-    pub fn write(&self, info: OpInInfo, params: WriteParams, data: &[u8])
-    {
-	self.0.state.write().pending.push_back((Pending::Write(params, data.into()), info));
-	self.0.state_change.notify_all();
-    }
-
-    pub fn read(&self, info: OpInInfo, params: ReadParams)
-    {
-	self.0.state.write().pending.push_back((Pending::Read(params), info));
-	self.0.state_change.notify_all();
-    }
-
-    pub fn poll(&self, info: OpInInfo, params: PollParams)
-    {
-	self.0.state.write().pending.push_back((Pending::Poll(params), info));
-	self.0.state_change.notify_all();
-    }
-
-    pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])
-    {
-	self.0.ioctl(info, params, data);
+	self.0.handle_cuse(Pending::Release, info);
     }
 }
