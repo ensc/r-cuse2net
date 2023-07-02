@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use ensc_cuse_ffi::{OpInInfo, OpenParams};
-use ensc_cuse_ffi::AsBytes;
+use ensc_cuse_ffi::{AsBytes, OpInInfo, OpenParams};
+use ensc_cuse_ffi::ffi as cuse_ffi;
 
 use parking_lot::RwLock;
 
@@ -76,7 +76,7 @@ impl DeviceRegistry {
 	})))
     }
 
-    pub fn interrupt(&self, info: OpInInfo, unique: u64) {
+    pub fn interrupt(&self, info: OpInInfo, unique: cuse_ffi::unique) {
 	let this = self.0.write();
 
 	for dev in this.devices.values() {

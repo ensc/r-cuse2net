@@ -64,16 +64,16 @@ impl <F: AsFd> CuseDevice<F> {
 	let hdr = ffi::fuse_out_header {
 	    len:	len as u32,
 	    error:	code.as_native(),
-	    unique:	0,
+	    unique:	ffi::unique::notify(),
 	};
 
 	self.send(&[ IoSlice::new(hdr.as_bytes()),
 		     IoSlice::new(data) ], len)
     }
 
-    pub fn send_error(&self, unique: u64, rc: u32) -> Result<(), Error>
+    pub fn send_error(&self, unique: ffi::unique, rc: u32) -> Result<(), Error>
     {
-	trace!("send_error({unique}, {rc})");
+	trace!("send_error({unique:?}, {rc})");
 
 	let hdr = ffi::fuse_out_header {
 	    len:	core::mem::size_of::<ffi::fuse_out_header>() as u32,
@@ -88,9 +88,9 @@ impl <F: AsFd> CuseDevice<F> {
 	self.send(&iov, hdr.len as usize)
     }
 
-    pub fn send_response(&self, unique: u64, data: &[&[u8]]) -> Result<(), Error>
+    pub fn send_response(&self, unique: ffi::unique, data: &[&[u8]]) -> Result<(), Error>
     {
-	trace!("send_response({unique})");
+	trace!("send_response({unique:?})");
 
 	let len = data.iter().fold(core::mem::size_of::<ffi::fuse_out_header>(),
 				   |acc, a| acc + a.len());
@@ -150,7 +150,7 @@ impl Default for KernelVersion {
 #[derive(Debug, Clone)]
 pub struct OpInInfo {
     pub opcode: ffi::fuse_opcode,
-    pub unique:	u64,
+    pub unique:	ffi::unique,
     pub nodeid:	u64,
     pub uid:	u32,
     pub gid:	u32,
@@ -248,7 +248,7 @@ pub enum OpIn<'a> {
     FuseRead(ReadParams),
     FuseIoctl(IoctlParams, &'a [u8]),
     FusePoll(PollParams),
-    FuseInterrupt { unique: u64 },
+    FuseInterrupt { unique: ffi::unique },
 }
 
 impl <'a> OpIn<'a> {

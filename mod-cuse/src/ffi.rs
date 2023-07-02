@@ -121,6 +121,21 @@ declare_flags!(poll_events, u32, {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct unique(u64);
+
+impl unique {
+    pub const fn from_ffi(v: u64) -> Self {
+	assert!(v > 0);
+	Self(0)
+    }
+
+    pub const fn notify() -> Self {
+	Self(0)
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct fuse_opcode(u32);
 
 impl fuse_opcode {
@@ -205,7 +220,7 @@ pub struct fuse_write_out {
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_interrupt_in {
-    pub unique:		u64,
+    pub unique:		unique,
 }
 
 #[repr(C)]
@@ -262,7 +277,7 @@ pub struct fuse_notify_poll_wakeup_out {
 pub struct fuse_in_header {
     pub len:		u32,
     pub opcode:		fuse_opcode,
-    pub unique:		u64,
+    pub unique:		unique,
     pub nodeid:		u64,
     pub uid:		u32,
     pub gid:		u32,
@@ -275,7 +290,7 @@ pub struct fuse_in_header {
 pub struct fuse_out_header {
     pub len:		u32,
     pub error:		i32,
-    pub unique:		u64,
+    pub unique:		unique,
 }
 
 #[repr(C)]

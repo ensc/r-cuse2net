@@ -10,7 +10,7 @@ use crate::Result;
 use crate::CuseDevice;
 
 pub fn cuse_complete_ioctl<F: AsFd>(
-    dev: &CuseDevice<F>, unique: u64,
+    dev: &CuseDevice<F>, unique: cuse_ffi::unique,
     IoctlParams{ flags, cmd, arg, in_size, out_size, .. }: &IoctlParams,
     _data: &[u8]) -> Result<bool>
 {
