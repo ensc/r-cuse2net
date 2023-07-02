@@ -1,15 +1,14 @@
-//
-
-use std::{os::{unix::prelude::OpenOptionsExt, fd::{RawFd, AsRawFd}}, io::{Write, Read}, time::Duration};
+use std::io::Write;
+use std::os::fd::{RawFd, AsRawFd};
+use std::os::unix::prelude::OpenOptionsExt;
+use std::time::Duration;
 
 use nix::poll::{PollFd, PollFlags};
-
+use nix::sys::termios;
 
 const RX_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn set_termios_raw(fd: RawFd) -> r_ser2net::Result<()> {
-    use nix::sys::termios;
-
     let mut ios = termios::tcgetattr(fd)?;
 
     termios::cfmakeraw(&mut ios);
@@ -117,6 +116,11 @@ fn main() -> r_ser2net::Result<()> {
 	assert_eq!(&tmp, b"TEST");
 	assert_eq!(poll_to(&f_cuse, PollFlags::POLLIN, 100), Ok(false));
 	println!(" ok");
+    }
+
+    {
+	termios::tcsendbreak(f_cuse.as_raw_fd(), 1000)?;
+	let _ = read_all(&f_ser, 1)?;
     }
 
     Ok(())

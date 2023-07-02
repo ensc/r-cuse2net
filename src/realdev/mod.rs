@@ -124,7 +124,7 @@ impl Device {
     }
 
     fn write(&self, seq: Sequence, wrinfo: proto::request::Write, data: &[u8]) -> crate::Result<()> {
-	trace!("write#{seq:?}@{wrinfo:?}: {data:?}");
+	trace!("write({seq:?}, {wrinfo:?}, #{})", data.len());
 
 	// TODO: use only write() and required that 'offset' is zero?  write()
 	// and pwrite() have different semantics regarding file position after
@@ -143,6 +143,8 @@ impl Device {
     }
 
     fn ioctl(&self, seq: Sequence, cmd: u32, arg: Arg) -> crate::Result<()> {
+	trace!("ioctl({seq:?}, {cmd:x}, {arg:?})");
+
 	let (cmd, arg, buf) = arg.encode(cmd)?;
 
 	let rc = unsafe {
@@ -161,6 +163,8 @@ impl Device {
     }
 
     fn poll(&self, poll: &poll::Poll, seq: Sequence, kh: u64, flags: u32, events: u32) -> crate::Result<()> {
+	trace!("poll({seq:?}, {kh}, {flags:x}, {events:?})");
+
 	match flags & proto::request::Poll::FLAG_SCHEDULE_NOTIFY {
 	    0	=> poll.poll_once((seq, events)),
 	    _	=> poll.poll((seq, kh, events)),
