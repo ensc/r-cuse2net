@@ -290,7 +290,7 @@ impl DeviceInner {
 	}
     }
 
-    pub fn try_interrupt(&self, info: OpInInfo, unique: cuse_ffi::unique) {
+    pub fn try_interrupt(&self, info: OpInInfo, unique: cuse_ffi::unique_t) {
 	let state = self.state.read();
 
 	let mut request = state.requests.iter()

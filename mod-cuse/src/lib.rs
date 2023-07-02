@@ -64,14 +64,14 @@ impl <F: AsFd> CuseDevice<F> {
 	let hdr = ffi::fuse_out_header {
 	    len:	len as u32,
 	    error:	code.as_native(),
-	    unique:	ffi::unique::notify(),
+	    unique:	ffi::unique_t::notify(),
 	};
 
 	self.send(&[ IoSlice::new(hdr.as_bytes()),
 		     IoSlice::new(data) ], len)
     }
 
-    pub fn send_error(&self, unique: ffi::unique, rc: u32) -> Result<(), Error>
+    pub fn send_error(&self, unique: ffi::unique_t, rc: u32) -> Result<(), Error>
     {
 	trace!("send_error({unique:?}, {rc})");
 
@@ -88,7 +88,7 @@ impl <F: AsFd> CuseDevice<F> {
 	self.send(&iov, hdr.len as usize)
     }
 
-    pub fn send_response(&self, unique: ffi::unique, data: &[&[u8]]) -> Result<(), Error>
+    pub fn send_response(&self, unique: ffi::unique_t, data: &[&[u8]]) -> Result<(), Error>
     {
 	trace!("send_response({unique:?})");
 
@@ -150,7 +150,7 @@ impl Default for KernelVersion {
 #[derive(Debug, Clone)]
 pub struct OpInInfo {
     pub opcode: ffi::fuse_opcode,
-    pub unique:	ffi::unique,
+    pub unique:	ffi::unique_t,
     pub nodeid:	u64,
     pub uid:	u32,
     pub gid:	u32,
@@ -189,10 +189,10 @@ impl From<&ffi::fuse_in_header> for OpInInfo {
 
 #[derive(Debug, Clone)]
 pub struct ReleaseParams {
-    pub fh:		u64,
+    pub fh:		ffi::fh_t,
     pub flags:		ffi::fh_flags,
     pub release_flags:	ffi::release_flags,
-    pub lock_owner:	u64,
+    pub lock_owner:	ffi::lock_owner_t,
 }
 
 #[derive(Debug, Clone)]
@@ -203,7 +203,7 @@ pub struct OpenParams {
 
 #[derive(Debug, Clone)]
 pub struct IoctlParams {
-    pub fh:		u64,
+    pub fh:		ffi::fh_t,
     pub flags:		ffi::ioctl_flags,
     pub cmd:		u32,
     pub arg:		u64,
@@ -213,26 +213,26 @@ pub struct IoctlParams {
 
 #[derive(Debug, Clone)]
 pub struct WriteParams {
-    pub fh:		u64,
+    pub fh:		ffi::fh_t,
     pub offset:		u64,
     pub flags:		ffi::fh_flags,
     pub write_flags:	ffi::write_flags,
-    pub lock_owner:	u64,
+    pub lock_owner:	ffi::lock_owner_t,
 }
 
 #[derive(Debug, Clone)]
 pub struct ReadParams {
-    pub fh:		u64,
+    pub fh:		ffi::fh_t,
     pub offset:		u64,
     pub size:		u32,
     pub read_flags:	ffi::read_flags,
-    pub lock_owner:	u64,
+    pub lock_owner:	ffi::lock_owner_t,
     pub flags:		ffi::fh_flags,
 }
 
 #[derive(Debug, Clone)]
 pub struct PollParams {
-    pub fh:		u64,
+    pub fh:		ffi::fh_t,
     pub kh:		u64,
     pub flags:		ffi::poll_flags,
     pub events:		ffi::poll_events,
@@ -248,7 +248,7 @@ pub enum OpIn<'a> {
     FuseRead(ReadParams),
     FuseIoctl(IoctlParams, &'a [u8]),
     FusePoll(PollParams),
-    FuseInterrupt { unique: ffi::unique },
+    FuseInterrupt { unique: ffi::unique_t },
 }
 
 impl <'a> OpIn<'a> {

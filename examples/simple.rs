@@ -78,13 +78,13 @@ fn main() -> r_ser2net::Result<()> {
 	.read(true)
 	.write(true)
 	.custom_flags(nix::libc::O_NONBLOCK)
-	.open(&dev_cuse)?;
+	.open(dev_cuse)?;
 
     let mut f_ser = std::fs::File::options()
 	.read(true)
 	.write(true)
 	.custom_flags(nix::libc::O_NONBLOCK)
-	.open(&dev_ser)?;
+	.open(dev_ser)?;
 
     print!("setting termios...");
     set_termios_raw(f_ser.as_raw_fd())?;

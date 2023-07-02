@@ -120,10 +120,10 @@ declare_flags!(poll_events, u32, {
 });
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct unique(u64);
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct unique_t(u64);
 
-impl unique {
+impl unique_t {
     pub const fn from_ffi(v: u64) -> Self {
 	assert!(v > 0);
 	Self(0)
@@ -131,6 +131,45 @@ impl unique {
 
     pub const fn notify() -> Self {
 	Self(0)
+    }
+}
+
+impl std::fmt::Debug for unique_t {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct fh_t(u64);
+
+impl fh_t {
+    pub const fn from_ffi(v: u64) -> Self {
+	assert!(v > 0);
+	Self(0)
+    }
+}
+
+impl std::fmt::Debug for fh_t {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	f.write_fmt(format_args!("{}", self.0))
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct lock_owner_t(u64);
+
+impl lock_owner_t {
+    pub const fn from_ffi(v: u64) -> Self {
+	Self(v)
+    }
+}
+
+impl std::fmt::Debug for lock_owner_t {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	f.write_fmt(format_args!("{:x}", self.0))
     }
 }
 
@@ -172,7 +211,7 @@ pub struct fuse_open_in {
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_open_out {
-    pub fh:		u64,
+    pub fh:		fh_t,
     pub open_flags:	open_in_flags,
     pub _padding:	u32,
 }
@@ -180,20 +219,20 @@ pub struct fuse_open_out {
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_release_in {
-    pub fh:		u64,
+    pub fh:		fh_t,
     pub flags:		fh_flags,
     pub release_flags:	release_flags,
-    pub lock_owner:	u64,
+    pub lock_owner:	lock_owner_t,
 }
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_write_in {
-    pub fh:		u64,
+    pub fh:		fh_t,
     pub offset:		u64,
     pub size:		u32,
     pub write_flags:	write_flags,
-    pub lock_owner:	u64,
+    pub lock_owner:	lock_owner_t,
     pub flags:		fh_flags,
     pub _padding:	u32,
 }
@@ -201,11 +240,11 @@ pub struct fuse_write_in {
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_read_in {
-    pub fh:		u64,
+    pub fh:		fh_t,
     pub offset:		u64,
     pub size:		u32,
     pub read_flags:	read_flags,
-    pub lock_owner:	u64,
+    pub lock_owner:	lock_owner_t,
     pub flags:		fh_flags,
     pub _padding:	u32,
 }
@@ -220,13 +259,13 @@ pub struct fuse_write_out {
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_interrupt_in {
-    pub unique:		unique,
+    pub unique:		unique_t,
 }
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_ioctl_in {
-    pub fh:		u64,
+    pub fh:		fh_t,
     pub flags:		ioctl_flags,
     pub cmd:		u32,
     pub arg:		u64,
@@ -253,7 +292,7 @@ pub struct fuse_ioctl_out {
 #[repr(C)]
 #[derive(Debug)]
 pub struct fuse_poll_in {
-    pub fh:		u64,
+    pub fh:		fh_t,
     pub kh:		u64,
     pub flags:		poll_flags,
     pub events:		poll_events,
@@ -277,7 +316,7 @@ pub struct fuse_notify_poll_wakeup_out {
 pub struct fuse_in_header {
     pub len:		u32,
     pub opcode:		fuse_opcode,
-    pub unique:		unique,
+    pub unique:		unique_t,
     pub nodeid:		u64,
     pub uid:		u32,
     pub gid:		u32,
@@ -290,7 +329,7 @@ pub struct fuse_in_header {
 pub struct fuse_out_header {
     pub len:		u32,
     pub error:		i32,
-    pub unique:		unique,
+    pub unique:		unique_t,
 }
 
 #[repr(C)]

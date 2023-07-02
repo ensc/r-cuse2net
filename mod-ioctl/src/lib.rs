@@ -8,4 +8,3 @@ mod error;
 mod bad;
 
 pub use bad::BadIoctl;
-
