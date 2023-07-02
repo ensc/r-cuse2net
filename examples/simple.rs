@@ -128,5 +128,19 @@ fn main() -> r_ser2net::Result<()> {
 	termios::tcflush(f_cuse.as_raw_fd(), FlushArg::TCOFLUSH)?;
     }
 
+    {
+	let mut tmp: nix::libc::c_int = 0;
+
+	let rc = unsafe {
+	    nix::libc::ioctl(f_cuse.as_raw_fd(), nix::libc::TIOCINQ, &mut tmp as * mut _)
+	};
+	assert_eq!(rc, 0);
+
+	let rc = unsafe {
+	    nix::libc::ioctl(f_cuse.as_raw_fd(), nix::libc::TIOCMGET, &mut tmp as * mut _)
+	};
+	assert_eq!(rc, 0);
+    }
+
     Ok(())
 }

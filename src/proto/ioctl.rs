@@ -153,12 +153,6 @@ impl Arg {
 	matches!(self, Self::Raw(_) | Self::RawArg(_))
     }
 
-    fn try_arg_be32(arg: u64) -> Result<be32> {
-	let v: u32 = arg.try_into()?;
-
-	Ok(v.into())
-    }
-
     fn try_as_object<T: Sized>(buf: &[u8]) -> Result<T> {
 	let sz = core::mem::size_of::<T>();
 	if buf.len() < sz {
@@ -257,6 +251,12 @@ impl Arg {
 	    ioctl::TIOCGLCKTRMIOS |
 	    ioctl::TCGETS		=> match self {
 		Self::None		=> uninit_arg::<ioctl_ffi::termios>(),
+		_			=> return Err(Error::BadIoctlParam),
+	    }
+
+	    ioctl::TIOCMGET |
+	    ioctl::TIOCINQ		=> match self {
+		Self::None		=> uninit_arg::<nix::libc::c_int>(),
 		_			=> return Err(Error::BadIoctlParam),
 	    }
 
