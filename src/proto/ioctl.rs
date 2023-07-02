@@ -149,6 +149,16 @@ impl Arg {
 	})
     }
 
+    pub fn is_raw(&self) -> bool {
+	matches!(self, Self::Raw(_) | Self::RawArg(_))
+    }
+
+    fn try_arg_be32(arg: u64) -> Result<be32> {
+	let v: u32 = arg.try_into()?;
+
+	Ok(v.into())
+    }
+
     fn try_as_object<T: Sized>(buf: &[u8]) -> Result<T> {
 	let sz = core::mem::size_of::<T>();
 	if buf.len() < sz {
@@ -254,7 +264,7 @@ impl Arg {
 		Self::Arg(arg) |
 		Self::RawArg(arg)	=> (arg.into(), Vec::new()),
 		_			=> {
-		    error!("impossible internal state");
+		    error!("impossible internal state for no io");
 		    return Err(Error::BadIoctlParam);
 		}
 	    },
@@ -326,6 +336,16 @@ impl Arg {
 		Source::Cuse		=> Self::Int(Self::try_as_i32(buf)?),
 		Source::Device		=> Self::None,
 	    },
+
+	    ioctl::TIOCINQ		=> match src {
+		Source::Cuse		=> Self::None,
+		Source::Device		=> Self::Int(Self::try_as_i32(buf)?),
+	    },
+
+	    ioctl::TCFLSH		=> match src {
+		Source::Cuse		=> Self::Arg(arg.into()),
+		Source::Device		=> Self::None,
+	    }
 
 	    _ if cmd.is_write()		=> match src {
 		Source::Cuse		=> Self::Raw(buf.to_vec()),

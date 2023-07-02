@@ -152,12 +152,13 @@ impl Device {
 	};
 
 	if rc < 0 {
-	    return Err(nix::Error::from_i32(rc).into());
-	}
+	    warn!("ioctl ({cmd:x}, {arg:?}) failed: {rc}");
+	    proto::Response::send_err(&self.conn, seq, nix::Error::last())
+	} else {
+	    let res_arg = Arg::decode(cmd, arg, &buf, proto::ioctl::Source::Device)?;
 
-	let res_arg = Arg::decode(cmd, arg, &buf, proto::ioctl::Source::Device)?;
-
-	proto::Response::send_ioctl(&self.conn, seq, rc as u64, res_arg)?;
+	    proto::Response::send_ioctl(&self.conn, seq, rc as u64, res_arg)
+	}?;
 
 	Ok(())
     }

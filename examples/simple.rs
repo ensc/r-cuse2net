@@ -4,7 +4,7 @@ use std::os::unix::prelude::OpenOptionsExt;
 use std::time::Duration;
 
 use nix::poll::{PollFd, PollFlags};
-use nix::sys::termios;
+use nix::sys::termios::{self, FlushArg};
 
 const RX_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -121,6 +121,11 @@ fn main() -> r_ser2net::Result<()> {
     {
 	termios::tcsendbreak(f_cuse.as_raw_fd(), 1000)?;
 	let _ = read_all(&f_ser, 1)?;
+    }
+
+    {
+	termios::tcflush(f_cuse.as_raw_fd(), FlushArg::TCIFLUSH)?;
+	termios::tcflush(f_cuse.as_raw_fd(), FlushArg::TCOFLUSH)?;
     }
 
     Ok(())

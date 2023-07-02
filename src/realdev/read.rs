@@ -38,6 +38,13 @@ impl <'a> ReadInner<'a> {
 	})
     }
 
+    fn close_internal(&mut self) {
+	self.do_intr(None);
+	self.send_sync();
+
+	self.fd_tx = None;
+    }
+
     pub fn register_pending(&mut self, req: ReadRequest) {
 	assert!(self.pending_request.is_none());
 	self.pending_request = Some(req);
@@ -50,6 +57,84 @@ impl <'a> ReadInner<'a> {
     fn next_request(&mut self) -> Option<ReadRequest> {
 	self.read_ops.pop_front()
     }
+
+    pub fn push_request(&mut self, req: (Sequence, usize)) {
+	self.read_ops.push_back(req);
+	self.send_sync();
+    }
+
+    fn send_data(&self, req: ReadRequest, buf: &[u8]) {
+	trace!("sending #{} bytes of data @{:?}", buf.len(), req.0);
+	let _ = proto::Response::send_read(&self.device.conn, req.0, buf)
+	    .map_err(|e| error!("failed to send data: {e:?}"));
+    }
+
+    fn send_sync_fd(fd: RawFd) {
+	#[allow(clippy::single_match)]
+	match nix::unistd::write(fd, &[ b'R' ]) {
+	    // TODO: what todo in error case?
+	    Err(e)	=> error!("failed to send sync signal: {e:?}"),
+	    _		=> (),
+	}
+    }
+
+    fn send_sync(&self) {
+	Self::send_sync_fd(self.fd_tx.as_ref().unwrap().as_raw_fd())
+    }
+
+    fn send_err(&self, seq: Sequence, rc: nix::Error) {
+	trace!("sending error {rc}@{seq:?}");
+
+	let _ = proto::Response::send_err(&self.device.conn, seq, rc)
+	    .map_err(|e| error!("failed to send err -{rc} response: {e:?}"));
+    }
+
+    fn do_intr_0(&mut self) {
+	while let Some(req) = self.next_request() {
+	    trace!("sending INTR to {req:?}");
+	    self.send_err(req.0, nix::Error::EINTR);
+	}
+
+	if let Some(req) = self.take_pending() {
+	    trace!("sending INTR to {req:?}");
+	    self.send_err(req.0, nix::Error::EINTR);
+	}
+    }
+
+    fn do_intr_x(&mut self, seq: Sequence) {
+	match &self.pending_request {
+	    Some((req_seq, _)) if *req_seq == seq	=> {
+		trace!("sending INTR to {seq:?}");
+		self.send_err(seq, nix::Error::EINTR);
+		self.pending_request.take();
+	    }
+
+	    _		=> {
+		let mut req = self.read_ops.iter()
+		    .enumerate()
+		    .filter(|(_, (req_seq, _))| *req_seq == seq);
+
+		if let Some((pos, _)) = req.next() {
+		    trace!("sending INTR to {req:?}");
+		    self.send_err(seq, nix::Error::EINTR);
+
+		    assert!(req.next().is_none());
+
+		    drop(req);
+		    self.read_ops.remove(pos);
+		}
+	    }
+	}
+    }
+
+    pub fn do_intr(&mut self, seq: Option<Sequence>) {
+	match seq {
+	    None	=> self.do_intr_0(),
+	    Some(seq)	=> self.do_intr_x(seq),
+	}
+
+	self.send_sync();
+    }
 }
 
 impl <'a> Read<'a> {
@@ -60,7 +145,7 @@ impl <'a> Read<'a> {
 
 impl std::ops::Drop for Read<'_> {
     fn drop(&mut self) {
-        self.close_internal()
+        self.0.write().close_internal()
     }
 }
 
@@ -73,24 +158,8 @@ impl Read<'_> {
 	self.0.write().next_request()
     }
 
-    fn take_pending(&self) -> Option<ReadRequest> {
-	self.0.write().take_pending()
-    }
-
-    fn send_sync(fd: RawFd) {
-	#[allow(clippy::single_match)]
-	match nix::unistd::write(fd, &[ b'R' ]) {
-	    // TODO: what todo in error case?
-	    Err(e)	=> error!("failed to send sync signal: {e:?}"),
-	    _		=> (),
-	}
-    }
-
     pub fn push_request(&self, req: (Sequence, usize)) {
-	let fd_sync = self.0.read().fd_tx.as_ref().unwrap().as_raw_fd();
-
-	self.0.write().read_ops.push_back(req);
-	Self::send_sync(fd_sync);
+	self.0.write().push_request(req)
     }
 
     pub fn read_nonblock(&self, req: (Sequence, usize)) {
@@ -108,16 +177,11 @@ impl Read<'_> {
     }
 
     fn send_data(&self, req: ReadRequest, buf: &[u8]) {
-	trace!("sending #{} bytes of data @{:?}", buf.len(), req.0);
-	let _ = proto::Response::send_read(&self.0.read().device.conn, req.0, buf)
-	    .map_err(|e| error!("failed to send data: {e:?}"));
+	self.0.read().send_data(req, buf)
     }
 
     fn send_err(&self, seq: Sequence, rc: nix::Error) {
-	trace!("sending error {rc}@{seq:?}");
-
-	let _ = proto::Response::send_err(&self.0.read().device.conn, seq, rc)
-	    .map_err(|e| error!("failed to send err -{rc} response: {e:?}"));
+	self.0.read().send_err(seq, rc)
     }
 
     fn consume_sync(&self, fd: RawFd) {
@@ -135,58 +199,7 @@ impl Read<'_> {
     }
 
     pub fn do_intr(&self, seq: Option<Sequence>) {
-	let fd_sync = self.0.read().fd_tx.as_ref().unwrap().as_raw_fd();
-
-	match seq {
-	    None	=> {
-		while let Some(req) = self.next_request() {
-		    trace!("sending INTR to {req:?}");
-		    self.send_err(req.0, nix::Error::EINTR);
-		}
-
-		if let Some(req) = self.take_pending() {
-		    trace!("sending INTR to {req:?}");
-		    self.send_err(req.0, nix::Error::EINTR);
-		}
-	    },
-
-	    Some(seq)	=> {
-		let mut this = self.0.write();
-
-		match &this.pending_request {
-		    Some((req_seq, _)) if *req_seq == seq	=> {
-			trace!("sending INTR to {seq:?}");
-			self.send_err(seq, nix::Error::EINTR);
-			this.pending_request.take();
-		    }
-
-		    _		=> {
-			let mut req = this.read_ops.iter()
-			    .enumerate()
-			    .filter(|(_, (req_seq, _))| *req_seq == seq);
-
-			if let Some((pos, _)) = req.next() {
-			    trace!("sending INTR to {req:?}");
-			    self.send_err(seq, nix::Error::EINTR);
-
-			    assert!(req.next().is_none());
-
-			    drop(req);
-			    this.read_ops.remove(pos);
-			}
-		    }
-		}
-	    }
-	}
-
-	Self::send_sync(fd_sync);
-    }
-
-    fn close_internal(&mut self) {
-	let fd_sync = self.0.write().fd_tx.take().unwrap().as_raw_fd();
-
-	self.do_intr(None);
-	Self::send_sync(fd_sync);
+	self.0.write().do_intr(seq)
     }
 
     fn handle_request(&self, fd_ser: RawFd, fd_sync: RawFd,

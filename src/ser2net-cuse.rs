@@ -136,7 +136,6 @@ fn main() -> Result<()> {
 	    OpIn::FusePoll(params)	=>
 		devices.for_fh(params.fh, |dev| dev.poll(info, params)),
 
-
 	    op	=> {
 		warn!("unimplemented op {op:?}");
 		let _ = info.send_error(f, nix::Error::ENOSYS);

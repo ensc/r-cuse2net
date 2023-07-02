@@ -39,6 +39,10 @@ impl BadIoctl {
 	TIOCMBIS	=> IOW(libc::c_int),
 	TIOCMBIC	=> IOW(libc::c_int),
 	TIOCMSET	=> IOW(libc::c_int),
+
+	TIOCINQ		=> IOR(libc::c_int),
+
+	TCFLSH		=> IOARG(()),
     });
 }
 

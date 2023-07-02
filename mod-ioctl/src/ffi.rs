@@ -104,6 +104,10 @@ impl ioctl {
 	Self::IOC(Self::DIR_NONE, tp, nr, 0)
     }
 
+    pub(crate) const fn IOARG<T: Sized>(tp: u8, nr: u32) -> Self {
+	Self::IOC(Self::DIR_NONE, tp, nr, core::mem::size_of::<T>())
+    }
+
     pub(crate) const fn IOR<T: Sized>(tp: u8, nr: u32) -> Self {
 	Self::IOC(Self::DIR_READ, tp, nr, core::mem::size_of::<T>())
     }

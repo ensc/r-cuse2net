@@ -232,6 +232,11 @@ impl DeviceInner {
 
 	let _ = self.conn.shutdown(std::net::Shutdown::Both);
 
+	for info in self.state.write().requests.values() {
+	    debug!("sending INTR to pending request {info:?}");
+	    self.send_error(&info.1, nix::Error::EINTR);
+	}
+
 	info!("rx_thread terminated");
     }
 
@@ -321,6 +326,10 @@ impl DeviceInner {
 	    Ok(arg)	=> arg
 	};
 
+	if arg.is_raw() {
+	    warn!("raw ioctl {params:?}/{arg:?}");
+	}
+
 	self.handle_cuse(Pending::Ioctl {
 	    cmd: params.cmd.into(),
 	    arg: arg
@@ -343,7 +352,7 @@ impl DeviceInner {
     }
 
     fn send_error(&self, info: &OpInInfo, rc: nix::Error) {
-	info.send_error(&self.cuse, nix::Error::EINVAL)
+	info.send_error(&self.cuse, rc)
 	    .unwrap_or_else(|e| error!("failed to send error {rc:?}: {e:?}"));
     }
 }
