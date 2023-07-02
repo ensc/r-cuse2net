@@ -1,5 +1,5 @@
 #![allow(clippy::redundant_field_names)]
-//
+
 #[macro_use]
 extern crate tracing;
 

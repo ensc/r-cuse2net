@@ -22,10 +22,6 @@ impl DeviceRegistryInner {
     pub fn get_cuse(&self) -> &CuseFileDevice {
 	self.cuse.as_ref()
     }
-
-//    pub fn get_cuse_fd(&self) -> BorrowedFd {
-//	self.cuse.as_fd()
-//    }
 }
 
 #[derive(Clone)]
@@ -83,10 +79,10 @@ impl DeviceRegistry {
     pub fn interrupt(&self, info: OpInInfo, unique: u64) {
 	let this = self.0.write();
 
-	for (_, dev) in &this.devices {
+	for dev in this.devices.values() {
 	    match dev {
 		DeviceState::Opening(_)		=> {}, // noop
-		DeviceState::Running(dev)	=> dev.try_interrupt(&info, unique),
+		DeviceState::Running(dev)	=> dev.try_interrupt(info.clone(), unique),
 	    }
 	}
     }
@@ -128,7 +124,7 @@ impl DeviceRegistry {
 
 	assert!(!reg.devices.contains_key(&dev_hdl));
 
-	let hdl = std::thread::Builder::new()
+	std::thread::Builder::new()
 	    .name("open".to_string())
 	    .spawn(move || -> Result<(), Error> {
 		let cuse = registry.read().cuse.clone();
@@ -137,7 +133,6 @@ impl DeviceRegistry {
 		let args = super::device::OpenArgs {
 		    addr:		addr,
 		    cuse:		cuse.clone(),
-		    fuse_hdl:		dev_hdl,
 		    flags:		params.flags,
 		};
 
@@ -170,9 +165,7 @@ impl DeviceRegistry {
 		}
 	    })?;
 
-	reg.devices.insert(dev_hdl, DeviceOpen {
-	    hdl:	hdl,
-	}.into());
+	reg.devices.insert(dev_hdl, DeviceOpen {}.into());
 
 	drop(reg);
 

@@ -73,10 +73,6 @@ impl Read<'_> {
 	self.0.write().next_request()
     }
 
-    fn register_pending(&self, req: ReadRequest) {
-	self.0.write().register_pending(req)
-    }
-
     fn take_pending(&self) -> Option<ReadRequest> {
 	self.0.write().take_pending()
     }
@@ -193,10 +189,6 @@ impl Read<'_> {
 	Self::send_sync(fd_sync);
     }
 
-    pub fn close(self) {
-	// implies Drop
-    }
-
     fn handle_request(&self, fd_ser: RawFd, fd_sync: RawFd,
 		      buf: &mut [u8], req: ReadRequest)
 		      -> std::result::Result<Option<ReadRequest>, (nix::Error, Option<ReadRequest>)> {
@@ -273,7 +265,7 @@ impl Read<'_> {
 		    }
 
 		    Err((e, None))	=>
-			warn!("error while handling request"),
+			warn!("error while handling request: {e:?}"),
 		}
 	    }
 	}

@@ -29,6 +29,11 @@ pub use response::Response;
 pub struct Sequence(u64);
 
 impl Sequence {
+    pub fn from_ffi(v: u64) -> Self {
+	assert!(v != 0);
+	Self(v)
+    }
+
     pub fn as_ffi(self) -> u64 {
 	self.0
     }

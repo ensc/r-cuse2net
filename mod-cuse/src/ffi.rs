@@ -1,4 +1,4 @@
-#![allow(dead_code, non_camel_case_types)]
+#![allow(non_camel_case_types)]
 
 pub const FUSE_KERNEL_VERSION: u32		= 7;
 pub const FUSE_KERNEL_MINOR_VERSION: u32	= 36;

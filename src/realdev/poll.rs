@@ -9,7 +9,6 @@ use crate::proto::{ Sequence, response::PollEvent as ProtoEvent, self };
 
 use super::Device;
 
-type ReadRequest = (Sequence, usize);
 type Kh = u64;
 
 const TOK_SYNC: u64 = 1;
@@ -19,7 +18,7 @@ pub fn proto_to_poll(ev: ProtoEvent) -> PollFlags {
     fn map(ev: ProtoEvent, bit_proto: i16, bit_poll: PollFlags) -> PollFlags {
 	match ev & (bit_proto as u32) {
 	    0		=> PollFlags::empty(),
-	    bit_proto	=> bit_poll,
+	    _		=> bit_poll,
 	}
     }
 
@@ -92,15 +91,19 @@ impl <'a> PollInner<'a> {
 	})
     }
 
-    pub fn signal(&self, ev: EpollFlags) {
+    pub fn signal(&mut self, ev: EpollFlags) {
 	trace!("signal({ev:?}, {:?}", self.khs);
 
 	let khs: Vec<_> = self.khs.iter()
-	    .filter(|(kh, kh_ev)| {
+	    .filter(|(_, kh_ev)| {
 		ev.intersects((**kh_ev) | EpollFlags::EPOLLERR | EpollFlags::EPOLLHUP)
 	    })
-	    .map(|(kh, kh_ev)| *kh)
+	    .map(|(kh, _)| *kh)
 	    .collect();
+
+	for kh in &khs {
+	    self.khs.remove(kh);
+	}
 
 	let _ = proto::Response::send_poll_wakeup(&self.device.conn, &khs)
 	    .map_err(|e| error!("failed to send wakeup: {e:?}"));
@@ -128,20 +131,26 @@ impl <'a> PollInner<'a> {
 	}
     }
 
-    pub fn poll(&self, req: (Sequence, ProtoEvent)) -> nix::Result<()> {
+    pub fn poll(&self, req: (Sequence, ProtoEvent)) -> nix::Result<bool> {
 	let fd_ser = self.device.fd.as_raw_fd();
 	let mut pfd = [
 	    PollFd::new(fd_ser, proto_to_poll(req.1))
 	];
 
-	match nix::poll::poll(&mut pfd, 0) {
-	    Ok(0)	=> self.send_events(req.0, PollFlags::empty()),
-	    Ok(1)	=> self.send_events(req.0, pfd[0].revents().unwrap_or(PollFlags::empty())),
+	let res = match nix::poll::poll(&mut pfd, 0) {
+	    Ok(0)	=> {
+		self.send_events(req.0, PollFlags::empty());
+		false
+	    }
+	    Ok(1)	=> {
+		self.send_events(req.0, pfd[0].revents().unwrap_or(PollFlags::empty()));
+		true
+	    }
 	    Ok(_)	=> panic!("unexpected value from poll()"),
 	    Err(e)	=> return Err(e),
-	}
+	};
 
-	Ok(())
+	Ok(res)
     }
 
 }
@@ -165,7 +174,8 @@ impl Poll<'_> {
 	let mut this = self.0.write();
 
 	match this.poll((req.0, req.2)) {
-	    Ok(_)	=> this.register_kh(req.1, proto_to_poll(req.2)),
+	    Ok(false)	=> this.register_kh(req.1, proto_to_poll(req.2)),
+	    Ok(true)	=> {},
 	    Err(e)	=> this.send_err(req.0, e),
 	}
     }
@@ -219,7 +229,7 @@ impl Poll<'_> {
 	    for e in &events[..cnt] {
 		match e.data() {
 		    TOK_SYNC	=> self.consume_sync(fd_sync),
-		    TOK_SER	=> self.0.read().signal(e.events()),
+		    TOK_SER	=> self.0.write().signal(e.events()),
 		    t		=> {
 			error!("unexpected token {t}");
 		    }

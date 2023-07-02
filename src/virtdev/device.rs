@@ -1,6 +1,3 @@
-#![allow(unused_variables)]
-
-
 use std::collections::{HashMap, VecDeque};
 use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc};
@@ -36,6 +33,7 @@ enum Pending {
     Read(ReadParams),
     Ioctl{cmd: ioctl, arg: Arg},
     Poll(PollParams),
+    Interrupt(Sequence),
 }
 
 #[derive(Default)]
@@ -50,9 +48,7 @@ struct DeviceInner {
     cuse:		Arc<CuseFileDevice>,
     rx_hdl:		Option<JoinHandle<()>>,
     tx_hdl:		Option<JoinHandle<()>>,
-    fuse_hdl:		u64,
     conn:		TcpStream,
-    flags:		cuse_ffi::fh_flags,
     state:		RwLock<State>,
     state_change:	Condvar,
     state_mutex:	Mutex<()>,
@@ -107,7 +103,7 @@ impl DeviceInner {
 
 
     fn handle_error(&self, seq: Sequence, rc: i32) -> crate::Result<()> {
-	let (req, info) = match self.remove_request(seq) {
+	let (_, info) = match self.remove_request(seq) {
 	    None	=> {
 		warn!("no such request {seq:?}");
 		return Ok(());
@@ -121,7 +117,6 @@ impl DeviceInner {
 	Ok(())
     }
 
-    //#[instrument(level="trace", skip(self), ret)]
     fn handle_response(&self, seq: Sequence, resp: proto::Response) -> crate::Result<()> {
 	use ensc_cuse_ffi::AsBytes;
 	use proto::Response as R;
@@ -230,12 +225,12 @@ impl DeviceInner {
 
 		Ok((None, ev))		=>
 		    if let Err(e) = self.handle_event(ev) {
-			warn!("failed to handle even: {e:?}");
+			warn!("failed to handle event: {e:?}");
 		    }
 
 		Err(proto::Error::RemoteError(Some(seq), rc))	=>
 		    if let Err(e) = self.handle_error(seq, rc) {
-			warn!("failed to handle error: {rc}@{seq:?}");
+			warn!("failed to handle error: {rc}@{seq:?}: {e:?}");
 		    }
 
 		Err(e)		=> {
@@ -280,6 +275,12 @@ impl DeviceInner {
 	    Pending::Poll(pollinfo)		=>
 		proto::Request::send_poll(&self.conn, pollinfo)
 		.map(|seq| (seq, Request::Poll)),
+
+	    Pending::Interrupt(unique)		=> {
+		proto::Request::send_interrupt(&self.conn, unique)
+		    .map_err(|e| (info, e.into()))?;
+		return Ok(())
+	    }
 	};
 
 	match res {
@@ -324,7 +325,7 @@ impl DeviceInner {
 	info!("tx_thread terminated");
     }
 
-    pub fn try_interrupt(&self, info: &OpInInfo, unique: u64) {
+    pub fn try_interrupt(&self, info: OpInInfo, unique: u64) {
 	let mut state = self.state.write();
 
 	// try pending requests first
@@ -336,22 +337,28 @@ impl DeviceInner {
 	    trace!("interrupting pending request #{pos}");
 	    assert!(request.next().is_none());
 
-	    self.send_error(&info, nix::Error::EINTR);
-	    drop(request);
+	    self.send_error(info, nix::Error::EINTR);
 
 	    state.pending.remove(pos);
 	    return;
 	}
 
+	// when not in list of pending request
 	let mut request = state.requests.iter()
 	    .filter(|(_, (_, info))| info.unique == unique);
 
-	if let Some((seq, (req, info))) = request.next() {
+	if let Some((seq, (req, _))) = request.next() {
 	    trace!("interrupting active request #{seq:?} {req:?}");
 
+	    assert!(request.next().is_none());
 
+	    let seq = *seq;
+
+	    state.pending.push_back((Pending::Interrupt(seq), info));
+	    drop(state);
+
+	    self.state_change.notify_all();
 	}
-
     }
 
     pub fn ioctl(&self, info: OpInInfo, params: IoctlParams, data: &[u8])
@@ -385,7 +392,6 @@ pub struct Device(Arc<DeviceInner>);
 pub(super) struct OpenArgs {
     pub addr:		SocketAddr,
     pub cuse:		Arc<CuseFileDevice>,
-    pub fuse_hdl:	u64,
     pub flags:		fh_flags,
 }
 
@@ -434,8 +440,6 @@ impl Device {
 
 	let inner = Arc::new(DeviceInner {
 	    cuse:		args.cuse,
-	    fuse_hdl:		args.fuse_hdl,
-	    flags:		args.flags,
 	    conn:		conn,
 	    state:		Default::default(),
 	    state_change:	Condvar::new(),
@@ -485,7 +489,7 @@ impl Device {
 	self.0.state_change.notify_all();
     }
 
-    pub fn try_interrupt(&self, info: &OpInInfo, unique: u64) {
+    pub fn try_interrupt(&self, info: OpInInfo, unique: u64) {
 	self.0.try_interrupt(info, unique);
     }
 

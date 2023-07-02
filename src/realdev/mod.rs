@@ -1,6 +1,3 @@
-#![allow(unused_variables)]
-//
-
 mod read;
 mod poll;
 
@@ -21,10 +18,6 @@ pub struct Device {
 }
 
 impl Device {
-    fn is_nonblock(flags: u32) -> bool {
-	(flags & (nix::libc::O_NONBLOCK as u32)) != 0
-    }
-
     pub fn open<P: AsRef<Path>>(p: P, seq: Sequence, flags: OFlag, conn: TcpStream) -> crate::Result<Self> {
 	use nix::sys::stat::Mode;
 

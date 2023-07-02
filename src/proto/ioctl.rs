@@ -26,6 +26,7 @@ impl Source {
     }
 }
 
+#[allow(dead_code)]
 pub union OsArg {
     termios:	core::mem::ManuallyDrop<ioctl_ffi::termios>,
     termios2:	core::mem::ManuallyDrop<ioctl_ffi::termios2>,
@@ -161,6 +162,7 @@ impl Arg {
 	Ok(unsafe { tmp.assume_init() })
     }
 
+    #[allow(dead_code)]
     fn try_as_be64(buf: &[u8]) -> Result<be64> {
 	match buf.len() {
 	    l if l < 8	=> Err(Error::BadLength),
@@ -176,6 +178,7 @@ impl Arg {
 	}
     }
 
+    #[allow(dead_code)]
     fn try_as_u32(buf: &[u8]) -> Result<be32> {
 	match buf.len() {
 	    l if l < 4	=> Err(Error::BadLength),
