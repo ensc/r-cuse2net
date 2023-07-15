@@ -15,6 +15,7 @@ use crate::proto::{self, Sequence};
 pub struct Device {
     fd:		OwnedFd,
     conn:	TcpStream,
+    allow_raw:	bool,
 }
 
 impl Device {
@@ -42,6 +43,7 @@ impl Device {
 	Ok(Self {
 	    fd:		fd,
 	    conn:	conn,
+	    allow_raw:	false,
 	})
     }
 
@@ -144,6 +146,13 @@ impl Device {
 
     fn ioctl(&self, seq: Sequence, cmd: u32, arg: Arg) -> crate::Result<()> {
 	trace!("ioctl({seq:?}, {cmd:x}, {arg:?})");
+
+	if arg.is_raw() && !self.allow_raw {
+	    warn!("raw ioctl {arg:?} not allowed");
+	    proto::Response::send_err(&self.conn, seq, nix::Error::EPERM)?;
+
+	    return Ok(())
+	}
 
 	let (cmd, arg, buf) = arg.encode(cmd)?;
 
