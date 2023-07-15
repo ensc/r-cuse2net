@@ -1,9 +1,13 @@
+## --*- conf-toml -*--
+
 [package]
 name = "r-cuse2net"
 version = "0.1.0"
+authors = ["Enrico Scholz <enrico.scholz@ensc.de>"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Run character devices over network"
+license = "GPL-3.0-or-later"
+keywords = ["linux", "cuse", "ser2net"]
 
 [[bin]]
 name = "cuse2net-cuse"
