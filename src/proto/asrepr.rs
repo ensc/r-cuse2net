@@ -34,7 +34,7 @@ pub unsafe trait AsReprBytesMut: AsReprBytes {
     ///
     /// ```should_panic
     /// # use core::mem::MaybeUninit;
-    /// # use r_ser2net::proto::{ AsReprBytes, AsReprBytesMut };
+    /// # use r_cuse2net::proto::{ AsReprBytes, AsReprBytesMut };
     /// #[repr(transparent)]
     /// struct U32Proto(u32);
     /// unsafe impl AsReprBytes for U32Proto {};
@@ -77,7 +77,7 @@ unsafe impl <T: AsReprBytesMut + Sized> AsReprBytesMut for MaybeUninit<T> {
     ///
     /// ```should_panic
     /// # use core::mem::MaybeUninit;
-    /// # use r_ser2net::proto::{ AsReprBytes, AsReprBytesMut };
+    /// # use r_cuse2net::proto::{ AsReprBytes, AsReprBytesMut };
     /// #[repr(transparent)]
     /// struct U32Proto(u32);
     /// unsafe impl AsReprBytes for U32Proto {};

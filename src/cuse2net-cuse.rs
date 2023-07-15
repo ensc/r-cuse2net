@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::net::SocketAddr;
 use ensc_cuse_ffi::{OpIn, KernelVersion};
 
-use r_ser2net::{ Result, CuseFileDevice, virtdev };
-use r_ser2net::virtdev::DeviceRegistry;
+use r_cuse2net::{ Result, CuseFileDevice, virtdev };
+use r_cuse2net::virtdev::DeviceRegistry;
 
 #[derive(clap::ValueEnum)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,9 +78,9 @@ fn main() -> Result<()> {
     let mut msg = ensc_cuse_ffi::ReadBuf::new();
     let mut is_init = true;
 
-    info!("running ser2net-cuse");
+    info!("running cuse2net-cuse");
 
-    r_ser2net::deadlock_detect();
+    r_cuse2net::deadlock_detect();
 
     loop {
 	let mut iter = msg.read(&mut f.reader())?;

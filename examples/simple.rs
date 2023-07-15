@@ -8,7 +8,7 @@ use nix::sys::termios::{self, FlushArg};
 
 const RX_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn set_termios_raw(fd: RawFd) -> r_ser2net::Result<()> {
+fn set_termios_raw(fd: RawFd) -> r_cuse2net::Result<()> {
     let mut ios = termios::tcgetattr(fd)?;
 
     termios::cfmakeraw(&mut ios);
@@ -68,7 +68,7 @@ fn read_all<F: AsRawFd>(fd: &F, mut cnt: usize) -> nix::Result<Vec<u8>> {
 }
 
 
-fn main() -> r_ser2net::Result<()> {
+fn main() -> r_cuse2net::Result<()> {
     let mut args = std::env::args();
     let _ = args.next();
     let dev_cuse = args.next().expect("missing cuse device");

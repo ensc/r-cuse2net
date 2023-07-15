@@ -3,8 +3,8 @@ Description=Peristent %i cuse device
 
 [Service]
 Environment=RUST_LOG=info
-EnvironmentFile=/etc/sysconfig/ser2net-%i.conf
-ExecStart=/usr/local/sbin/ser2net-cuse --device %I \
+EnvironmentFile=/etc/sysconfig/cuse2net-%i.conf
+ExecStart=/usr/local/sbin/cuse2net-cuse --device %I \
   --major $CUSE_MAJOR --minor $CUSE_MINOR \
   --server ${SERVER_IP}:${SERVER_PORT}
 

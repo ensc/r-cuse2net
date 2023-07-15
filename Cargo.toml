@@ -1,17 +1,17 @@
 [package]
-name = "r-ser2net"
+name = "r-cuse2net"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
-name = "ser2net-cuse"
-path = "src/ser2net-cuse.rs"
+name = "cuse2net-cuse"
+path = "src/cuse2net-cuse.rs"
 
 [[bin]]
-name = "ser2net-dev"
-path = "src/ser2net-dev.rs"
+name = "cuse2net-dev"
+path = "src/cuse2net-dev.rs"
 
 [workspace]
 members = [

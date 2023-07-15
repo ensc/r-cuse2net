@@ -7,8 +7,8 @@ use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::net::{TcpStream, TcpListener, SocketAddr};
 
-use r_ser2net::Result;
-use r_ser2net::realdev;
+use r_cuse2net::Result;
+use r_cuse2net::realdev;
 
 #[derive(clap::ValueEnum)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,7 +40,7 @@ struct CliOpts {
 }
 
 fn run_thread(sock: TcpStream, device: PathBuf) -> Result<()> {
-    use r_ser2net::proto;
+    use r_cuse2net::proto;
 
     let dev = {
 	let mut buf: [MaybeUninit<u8>; proto::MAX_MSG_SIZE] = [MaybeUninit::uninit(); proto::MAX_MSG_SIZE];
@@ -82,9 +82,9 @@ fn main() -> Result<()> {
 
     let socket = TcpListener::bind(SocketAddr::new(args.listen, args.port))?;
 
-    info!("running ser2net-dev");
+    info!("running cuse2net-dev");
 
-    r_ser2net::deadlock_detect();
+    r_cuse2net::deadlock_detect();
 
     loop {
 	let (conn, addr) = socket.accept()?;
