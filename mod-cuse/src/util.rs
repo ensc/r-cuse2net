@@ -73,6 +73,7 @@ macro_rules! declare_flags {
 		let mut bit = 0;
 		let mut res = Vec::new();
 
+		#[allow(clippy::redundant_closure_call)]
 		if let Some(info) = $map(&self) {
 		    res.push(Cow::Borrowed(info));
 		}
