@@ -29,6 +29,6 @@ ensc-cuse-ffi = { version = "*", path = "mod-cuse" }
 ensc-ioctl-ffi = { version = "*", path = "mod-ioctl" }
 tracing = { version = "*", features = ["max_level_trace", "release_max_level_info"] }
 tracing-subscriber = { version = "*", features = ["json", "env-filter"] }
-nix = "*"
+nix = { version = "*", features = ["event", "fs", "poll", "socket", "term", "uio"] }
 clap = { version = "*", features = ["derive", "color", "std", "wrap_help"] }
 parking_lot = { version = "*", features = ["deadlock_detection"] }

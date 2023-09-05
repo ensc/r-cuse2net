@@ -44,9 +44,7 @@ impl <F: AsFd> CuseDevice<F> {
     }
 
     fn send(&self, data: &[IoSlice], total_len: usize) -> Result<(), Error> {
-	use std::os::fd::AsRawFd;
-
-	let fd = self.dev.as_fd().as_raw_fd();
+	let fd = self.dev.as_fd();
 	let sent_len = nix::sys::uio::writev(fd, data)?;
 
 	if sent_len != total_len {

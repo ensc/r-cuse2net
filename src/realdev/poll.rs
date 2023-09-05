@@ -1,8 +1,11 @@
 //
 
-use std::{os::fd::{OwnedFd, FromRawFd, AsRawFd, RawFd}, collections::HashMap, mem::MaybeUninit};
+use std::collections::HashMap;
+use std::mem::MaybeUninit;
+use std::os::fd::{OwnedFd, FromRawFd, AsRawFd, BorrowedFd, AsFd};
 
-use nix::{sys::epoll::{self, EpollEvent, EpollFlags}, poll::{PollFlags, PollFd}};
+use nix::sys::epoll::{self, EpollEvent, EpollFlags};
+use nix::poll::{PollFlags, PollFd};
 use parking_lot::RwLock;
 
 use crate::proto::{ Sequence, response::PollEvent as ProtoEvent, self };
@@ -72,20 +75,20 @@ pub struct PollInner<'a> {
 
     khs:		HashMap<Kh, EpollFlags>,
 
-    fd_epoll:		OwnedFd,
+    fd_epoll:		epoll::Epoll,
 }
 
 impl <'a> PollInner<'a> {
     pub fn new(dev: &'a Device) -> nix::Result<Self> {
 
 	let pipe = nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)?;
-	let efd = epoll::epoll_create1(epoll::EpollCreateFlags::EPOLL_CLOEXEC)?;
+	let efd = epoll::Epoll::new(epoll::EpollCreateFlags::EPOLL_CLOEXEC)?;
 
 	Ok(Self {
 	    device:	dev,
 	    fd_rx:	Some(unsafe { OwnedFd::from_raw_fd(pipe.0) }),
 	    fd_tx:	Some(unsafe { OwnedFd::from_raw_fd(pipe.1) }),
-	    fd_epoll:	unsafe { OwnedFd::from_raw_fd(efd) },
+	    fd_epoll:	efd,
 
 	    khs:	HashMap::new()
 	})
@@ -132,9 +135,8 @@ impl <'a> PollInner<'a> {
     }
 
     pub fn poll(&self, req: (Sequence, ProtoEvent)) -> nix::Result<bool> {
-	let fd_ser = self.device.fd.as_raw_fd();
 	let mut pfd = [
-	    PollFd::new(fd_ser, proto_to_poll(req.1))
+	    PollFd::new(&self.device.fd, proto_to_poll(req.1))
 	];
 
 	let res = match nix::poll::poll(&mut pfd, 0) {
@@ -192,13 +194,13 @@ impl Poll<'_> {
     }
 
     // TODO: move to super::
-    fn consume_sync(&self, fd: RawFd) {
+    fn consume_sync(&self, fd: BorrowedFd) {
 	#[allow(invalid_value, clippy::uninit_assumed_init)]
 	let mut tmp: [u8;1] = unsafe {
 	    MaybeUninit::uninit().assume_init()
 	};
 
-	match nix::unistd::read(fd, &mut tmp) {
+	match nix::unistd::read(fd.as_raw_fd(), &mut tmp) {
 	    Ok(1)	=> trace!("received sync char {tmp:?}"),
 	    Ok(c)	=> warn!("unexpected number {c} of chars received"),
 	    Err(e)	=> warn!("sync rx failed: {e:?}"),
@@ -206,17 +208,15 @@ impl Poll<'_> {
     }
 
     pub fn run(&self) -> crate::Result<()> {
-	let fd_ser = self.0.read().device.fd.as_raw_fd();
+	let ev_sync = EpollEvent::new(EpollFlags::EPOLLIN, TOK_SYNC);
+	let ev_ser  = EpollEvent::new(EpollFlags::EPOLLIN | EpollFlags::EPOLLOUT |
+				      EpollFlags::EPOLLPRI | EpollFlags::EPOLLET, TOK_SER);
+
+	let efd = &self.0.read().fd_epoll;
 	let fd_sync = self.0.write().fd_rx.take().unwrap();
-	let fd_sync = fd_sync.as_raw_fd();
-	let efd = self.0.read().fd_epoll.as_raw_fd();
 
-	let mut ev_sync = EpollEvent::new(EpollFlags::EPOLLIN, TOK_SYNC);
-	let mut ev_ser  = EpollEvent::new(EpollFlags::EPOLLIN | EpollFlags::EPOLLOUT |
-					  EpollFlags::EPOLLPRI | EpollFlags::EPOLLET, TOK_SER);
-
-	epoll::epoll_ctl(efd, epoll::EpollOp::EpollCtlAdd, fd_sync, &mut ev_sync)?;
-	epoll::epoll_ctl(efd, epoll::EpollOp::EpollCtlAdd, fd_ser,  &mut ev_ser)?;
+	efd.add(&fd_sync, ev_sync)?;
+	efd.add(&self.0.read().device.fd,  ev_ser)?;
 
 	while self.is_alive() {
 	    #[allow(invalid_value, clippy::uninit_assumed_init)]
@@ -224,11 +224,11 @@ impl Poll<'_> {
 		core::mem::MaybeUninit::uninit().assume_init()
 	    };
 
-	    let cnt = epoll::epoll_wait(efd, &mut events, -1)?;
+	    let cnt = efd.wait(&mut events, -1)?;
 
 	    for e in &events[..cnt] {
 		match e.data() {
-		    TOK_SYNC	=> self.consume_sync(fd_sync),
+		    TOK_SYNC	=> self.consume_sync(fd_sync.as_fd()),
 		    TOK_SER	=> self.0.write().signal(e.events()),
 		    t		=> {
 			error!("unexpected token {t}");

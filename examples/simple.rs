@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::os::fd::{RawFd, AsRawFd};
+use std::os::fd::{AsRawFd, BorrowedFd, AsFd};
 use std::os::unix::prelude::OpenOptionsExt;
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use nix::sys::termios::{self, FlushArg};
 
 const RX_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn set_termios_raw(fd: RawFd) -> r_cuse2net::Result<()> {
+fn set_termios_raw(fd: BorrowedFd) -> r_cuse2net::Result<()> {
     let mut ios = termios::tcgetattr(fd)?;
 
     termios::cfmakeraw(&mut ios);
@@ -19,10 +19,9 @@ fn set_termios_raw(fd: RawFd) -> r_cuse2net::Result<()> {
     Ok(())
 }
 
-fn poll_to<F: AsRawFd>(fd: &F, flags: PollFlags, to_ms: i32) -> nix::Result<bool> {
-    let fd = fd.as_raw_fd();
+fn poll_to(fd: BorrowedFd, flags: PollFlags, to_ms: i32) -> nix::Result<bool> {
     let mut pfd = [
-	PollFd::new(fd, PollFlags::POLLIN)
+	PollFd::new(&fd, PollFlags::POLLIN)
     ];
 
     nix::poll::poll(&mut pfd, to_ms)?;
@@ -30,12 +29,11 @@ fn poll_to<F: AsRawFd>(fd: &F, flags: PollFlags, to_ms: i32) -> nix::Result<bool
     Ok(pfd[0].revents().unwrap().intersects(flags))
 }
 
-fn poll<F: AsRawFd>(fd: &F, flags: PollFlags) -> nix::Result<bool> {
+fn poll(fd: BorrowedFd, flags: PollFlags) -> nix::Result<bool> {
     poll_to(fd, flags, RX_TIMEOUT.as_millis() as i32)
 }
 
-fn read_all<F: AsRawFd>(fd: &F, mut cnt: usize) -> nix::Result<Vec<u8>> {
-    let fd = fd.as_raw_fd();
+fn read_all(fd: BorrowedFd, mut cnt: usize) -> nix::Result<Vec<u8>> {
     let mut res = Vec::<u8>::with_capacity(cnt);
 
     let buf = unsafe {
@@ -45,7 +43,7 @@ fn read_all<F: AsRawFd>(fd: &F, mut cnt: usize) -> nix::Result<Vec<u8>> {
     let mut pos = 0;
 
     while cnt > 0 {
-	match nix::unistd::read(fd, &mut buf[pos..]) {
+	match nix::unistd::read(fd.as_raw_fd(), &mut buf[pos..]) {
 	    Ok(0)	=> return Err(nix::Error::ENXIO),
 	    Ok(l)	=> {
 		assert!(l <= cnt);
@@ -53,7 +51,7 @@ fn read_all<F: AsRawFd>(fd: &F, mut cnt: usize) -> nix::Result<Vec<u8>> {
 		cnt -= l;
 	    }
 	    Err(e) if e == nix::Error::EAGAIN	=> {
-		poll(&fd, PollFlags::POLLIN)?;
+		poll(fd, PollFlags::POLLIN)?;
 	    }
 
 	    Err(e)	=> return Err(e)
@@ -87,15 +85,15 @@ fn main() -> r_cuse2net::Result<()> {
 	.open(dev_ser)?;
 
     print!("setting termios...");
-    set_termios_raw(f_ser.as_raw_fd())?;
-    set_termios_raw(f_cuse.as_raw_fd())?;
+    set_termios_raw(f_ser.as_fd())?;
+    set_termios_raw(f_cuse.as_fd())?;
     println!(" ok");
 
 
     {
 	print!("write(cuse -> ser");
 	f_cuse.write_all(b"test")?;
-	let tmp = read_all(&f_ser, 4)?;
+	let tmp = read_all(f_ser.as_fd(), 4)?;
 	assert_eq!(&tmp, b"test");
 	println!(" ok");
     }
@@ -103,7 +101,7 @@ fn main() -> r_cuse2net::Result<()> {
     {
 	print!("write(ser -> test");
 	f_ser.write_all(b"test")?;
-	let tmp = read_all(&f_cuse, 4)?;
+	let tmp = read_all(f_cuse.as_fd(), 4)?;
 	assert_eq!(&tmp, b"test");
 	println!(" ok");
     }
@@ -111,21 +109,21 @@ fn main() -> r_cuse2net::Result<()> {
     {
 	print!("write(ser -> test (poll)");
 	f_ser.write_all(b"TEST")?;
-	assert_eq!(poll(&f_cuse, PollFlags::POLLIN), Ok(true));
-	let tmp = read_all(&f_cuse, 4)?;
+	assert_eq!(poll(f_cuse.as_fd(), PollFlags::POLLIN), Ok(true));
+	let tmp = read_all(f_cuse.as_fd(), 4)?;
 	assert_eq!(&tmp, b"TEST");
-	assert_eq!(poll_to(&f_cuse, PollFlags::POLLIN, 100), Ok(false));
+	assert_eq!(poll_to(f_cuse.as_fd(), PollFlags::POLLIN, 100), Ok(false));
 	println!(" ok");
     }
 
     {
-	termios::tcsendbreak(f_cuse.as_raw_fd(), 1000)?;
-	let _ = read_all(&f_ser, 1)?;
+	termios::tcsendbreak(f_cuse.as_fd(), 1000)?;
+	let _ = read_all(f_ser.as_fd(), 1)?;
     }
 
     {
-	termios::tcflush(f_cuse.as_raw_fd(), FlushArg::TCIFLUSH)?;
-	termios::tcflush(f_cuse.as_raw_fd(), FlushArg::TCOFLUSH)?;
+	termios::tcflush(f_cuse.as_fd(), FlushArg::TCIFLUSH)?;
+	termios::tcflush(f_cuse.as_fd(), FlushArg::TCOFLUSH)?;
     }
 
     {

@@ -133,7 +133,7 @@ impl Device {
 	// the call
 	let l = match wrinfo.offset.into() {
 	    0		=> nix::unistd::write(self.fd.as_raw_fd(), data),
-	    offs	=> nix::sys::uio::pwrite(self.fd.as_raw_fd(), data, offs as nix::libc::off_t),
+	    offs	=> nix::sys::uio::pwrite(&self.fd, data, offs as nix::libc::off_t),
 	};
 
 	match l {

@@ -457,7 +457,7 @@ mod compile_test {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::os::fd::{OwnedFd, FromRawFd};
+    use std::os::fd::AsRawFd;
     use nix::sys::socket::{SockFlag, AddressFamily, SockType};
 
     #[test]
@@ -468,21 +468,18 @@ mod test {
 	    None,
 	    SockFlag::SOCK_CLOEXEC).unwrap();
 
-	let fd_in_owned = unsafe { OwnedFd::from_raw_fd(fd_in) };
-	let _fd_out_owned = unsafe { OwnedFd::from_raw_fd(fd_out) };
-
 	let data_ref: [be64;4] = [ 1.into(), 23.into(), 42.into(), 66.into() ];
 	let data_sz = data_ref.len() * 8;
 
 	let l = unsafe {
-	    nix::libc::write(fd_out, data_ref.as_ptr() as * const _, data_sz)
+	    nix::libc::write(fd_out.as_fd().as_raw_fd(), data_ref.as_ptr() as * const _, data_sz)
 	};
 
 	assert_eq!(l as usize, data_sz);
 
 	let mut in_len = Some(data_sz);
 	let tmp = Alloc::<be64>::alloc_bytes(data_sz).unwrap();
-	let data_in = recv_to(&fd_in_owned, MaybeUninit::new(tmp), &mut in_len).unwrap().into_inner();
+	let data_in = recv_to(&fd_in, MaybeUninit::new(tmp), &mut in_len).unwrap().into_inner();
 
 	assert_eq!(data_in, data_ref);
     }

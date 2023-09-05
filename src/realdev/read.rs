@@ -1,5 +1,5 @@
 use std::mem::MaybeUninit;
-use std::os::fd::{OwnedFd, AsRawFd, RawFd, FromRawFd};
+use std::os::fd::{OwnedFd, AsRawFd, FromRawFd, BorrowedFd, AsFd};
 use std::collections::VecDeque;
 
 use nix::fcntl::OFlag;
@@ -69,9 +69,9 @@ impl <'a> ReadInner<'a> {
 	    .map_err(|e| error!("failed to send data: {e:?}"));
     }
 
-    fn send_sync_fd(fd: RawFd) {
+    fn send_sync_fd(fd: BorrowedFd) {
 	#[allow(clippy::single_match)]
-	match nix::unistd::write(fd, &[ b'R' ]) {
+	match nix::unistd::write(fd.as_raw_fd(), &[ b'R' ]) {
 	    // TODO: what todo in error case?
 	    Err(e)	=> error!("failed to send sync signal: {e:?}"),
 	    _		=> (),
@@ -79,7 +79,7 @@ impl <'a> ReadInner<'a> {
     }
 
     fn send_sync(&self) {
-	Self::send_sync_fd(self.fd_tx.as_ref().unwrap().as_raw_fd())
+	Self::send_sync_fd(self.fd_tx.as_ref().unwrap().as_fd())
     }
 
     fn send_err(&self, seq: Sequence, rc: nix::Error) {
@@ -184,13 +184,13 @@ impl Read<'_> {
 	self.0.read().send_err(seq, rc)
     }
 
-    fn consume_sync(&self, fd: RawFd) {
+    fn consume_sync(&self, fd: BorrowedFd) {
 	#[allow(invalid_value, clippy::uninit_assumed_init)]
 	let mut tmp: [u8;1] = unsafe {
 	    MaybeUninit::uninit().assume_init()
 	};
 
-	match nix::unistd::read(fd, &mut tmp) {
+	match nix::unistd::read(fd.as_raw_fd(), &mut tmp) {
 	    Ok(1)	=> trace!("received sync char {tmp:?}"),
 	    Ok(c)	=> warn!("unexpected number {c} of chars received"),
 	    Err(e)	=> warn!("sync rx failed: {e:?}"),
@@ -202,22 +202,22 @@ impl Read<'_> {
 	self.0.write().do_intr(seq)
     }
 
-    fn handle_request(&self, fd_ser: RawFd, fd_sync: RawFd,
+    fn handle_request(&self, fd_ser: BorrowedFd, fd_sync: BorrowedFd,
 		      buf: &mut [u8], req: ReadRequest)
 		      -> std::result::Result<Option<ReadRequest>, (nix::Error, Option<ReadRequest>)> {
 	let l = req.1.min(buf.len());
 
-	match nix::unistd::read(fd_ser, &mut buf[..l]) {
+	match nix::unistd::read(fd_ser.as_raw_fd(), &mut buf[..l]) {
 	    Ok(read_len)		=> {
 		assert!(read_len <= l);
 		self.send_data(req, &buf[..read_len]);
 		Ok(None)
 	    },
 
-	    Err(e) if e == nix::Error::EAGAIN	=> {
+	    Err(nix::Error::EAGAIN)	=> {
 		let mut fds = [
-		    PollFd::new(fd_sync, PollFlags::POLLIN),
-		    PollFd::new(fd_ser, PollFlags::POLLIN),
+		    PollFd::new(&fd_sync, PollFlags::POLLIN),
+		    PollFd::new(&fd_ser, PollFlags::POLLIN),
 		];
 
 		// register the pending request so that it can be seen by do_intr()
@@ -248,7 +248,7 @@ impl Read<'_> {
     }
 
     pub fn run(&self) -> crate::Result<()> {
-	let fd_ser = self.0.read().device.fd.as_raw_fd();
+	let fd_ser = self.0.read().device.fd.as_fd();
 
 	// own the RX side of the sync pipe
 	let fd_sync = self.0.write().fd_rx.take().unwrap();
@@ -259,11 +259,9 @@ impl Read<'_> {
 	};
 
 	while self.is_alive() {
-	    let fd_sync = fd_sync.as_raw_fd();
-
 	    match self.next_request() {
-		None		=> self.consume_sync(fd_sync),
-		Some(req)	=> match self.handle_request(fd_ser, fd_sync, &mut buf, req) {
+		None		=> self.consume_sync(fd_sync.as_fd()),
+		Some(req)	=> match self.handle_request(fd_ser, fd_sync.as_fd(), &mut buf, req) {
 		    Ok(Some(req))	=> {
 			debug!("rescheduling read request {req:?}");
 			self.0.write().read_ops.push_front(req);

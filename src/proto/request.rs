@@ -139,7 +139,7 @@ impl <'a> Request<'a> {
 
 	let res = match op {
 	    RequestCode::Open		=>
-		Self::Open(seq, recv_to(r, Open::uninit(), &mut rx_len)?),
+		Self::Open(seq, recv_to(&r, Open::uninit(), &mut rx_len)?),
 	    RequestCode::Release	=> Self::Release(seq),
 	    RequestCode::Write		=> {
 		let wrinfo = recv_to(&r, Write::uninit(), &mut rx_len)?;
