@@ -62,6 +62,12 @@ Options:
 cuse2net-dev --device /dev/serial/by-path/pci-0000:00:14.0-usb-0:3:1.0-port0 --listen 127.0.0.1 --port 9001
 ```
 
+### cuse
+
+```
+cuse2net-cuse --device ttyCUSE0 --major 450 --minor 100 --server 127.0.0.1:9000
+```
+
 or (when using the systemd services in [contrib/](contrib/)
 
 ```
@@ -74,13 +80,6 @@ CUSE_MINOR=100
 EOF
 
 # systemctl enable cuse2net-cuse@ttyCUSE0
-```
-
-
-### cuse
-
-```
-cuse2net-cuse --device ttyCUSE0 --major 450 --minor 100 --server 127.0.0.1:9000
 ```
 
 ### ESP32 IDF within podman
