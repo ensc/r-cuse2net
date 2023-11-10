@@ -17,6 +17,13 @@ pub unsafe trait AsReprBytes {
 					core::mem::size_of_val(self))
 	}
     }
+
+    #[doc(hidden)]
+    /// Hack for `should_panic` doc tests in release mode which trigger on
+    /// debug_assert!()
+    fn is_debug_build(&self) -> bool {
+	cfg!(debug_assertions)
+    }
 }
 
 /// # Safety
@@ -43,6 +50,10 @@ pub unsafe trait AsReprBytesMut: AsReprBytes {
     /// let mut dat = U32Proto(0);
     ///
     /// dat.update_repr(&0x12345678_u32.to_ne_bytes());
+    ///
+    /// # if (!dat.is_debug_build()) {
+    /// #     panic!("fake assertion for doc test in release mode")
+    /// # }
     /// ```
     fn update_repr(&mut self, buf: &[u8]) {
 	debug_assert_eq!(self as * const _ as * const u8, buf.as_ptr());
@@ -86,6 +97,10 @@ unsafe impl <T: AsReprBytesMut + Sized> AsReprBytesMut for MaybeUninit<T> {
     /// let mut dat = U32Proto::uninit();
     ///
     /// dat.update_repr(&0x12345678_u32.to_ne_bytes());
+    ///
+    /// # if (!dat.is_debug_build()) {
+    /// #     panic!("fake assertion for doc test in release mode")
+    /// # }
     /// ```
     fn update_repr(&mut self, buf: &[u8]) {
 	let tmp: &mut T = unsafe { core::mem::transmute(self) };
